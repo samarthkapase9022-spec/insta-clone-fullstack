@@ -1,7 +1,7 @@
 from motor.motor_asyncio import AsyncIOMotorClient
 
 # Cloud MongoDB Atlas URI
-MONGO_URL = "mongodb+srv://samarthkapase:<Sachin9022>@cluster0.gg6b072.mongodb.net/"
+MONGO_URL = "mongodb+srv://samarthkapase:Samarth1234@cluster0.gg6b072.mongodb.net/?retryWrites=true&w=majority"
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client.insta_clone
