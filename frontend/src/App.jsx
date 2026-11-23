@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import "./App.css";
 
-const API_URL = "http://127.0.0.1:8000";
+const API_URL = "https://insta-clone-fullstack-0t7a.onrender.com";
 
 // Crisp Instagram SVG Icons
 const Icons = {
