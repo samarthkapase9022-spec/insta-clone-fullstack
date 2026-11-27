@@ -180,6 +180,7 @@ function App() {
 
   const [notifications, setNotifications] = useState([]);
   const [passForm, setPassForm] = useState({ old_password: "", new_password: "" });
+  const [deletePass, setDeletePass] = useState("");
 
   const authHeaders = { Authorization: `Bearer ${token}` };
   const activeStory = activeStoryIndex !== null ? stories[activeStoryIndex] : null;
@@ -808,6 +809,28 @@ function App() {
     const data = await res.json();
     alert(data.message || data.detail);
     setPassForm({ old_password: "", new_password: "" });
+  };
+
+  const handleDeleteAccount = async (e) => {
+    e.preventDefault();
+    if (!deletePass.trim()) return;
+    const confirmed = window.confirm(
+      "Are you sure? This will permanently delete your account, posts, stories, and messages. This action cannot be undone!"
+    );
+    if (!confirmed) return;
+
+    const res = await fetch(`${API_URL}/users/me`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json", ...authHeaders },
+      body: JSON.stringify({ password: deletePass }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      alert(data.message);
+      handleLogout();
+    } else {
+      alert(data.detail || "Failed to delete account.");
+    }
   };
 
   const renderFormattedCaption = (text) => {
@@ -1618,6 +1641,30 @@ function App() {
                   <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>{act.device} • {formatTimeAgo(act.time)}</div>
                 </div>
               ))}
+            </div>
+            
+            <div style={{ border: "1px solid #ff3040", borderRadius: "8px", padding: "16px", marginTop: "20px" }}>
+              <h4 style={{ marginBottom: "6px", color: "#ff3040" }}>Delete Account</h4>
+              <p style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "10px" }}>
+                Permanently delete your Pixagram account, posts, stories, and messages. Enter your password to confirm.
+              </p>
+              <form onSubmit={handleDeleteAccount}>
+                <input
+                  className="ig-input"
+                  type="password"
+                  placeholder="Enter password to confirm"
+                  required
+                  value={deletePass}
+                  onChange={(e) => setDeletePass(e.target.value)}
+                />
+                <button
+                  type="submit"
+                  className="ig-btn-blue"
+                  style={{ background: "#ff3040", marginTop: "8px" }}
+                >
+                  Permanently Delete Account
+                </button>
+              </form>
             </div>
           </div>
         )}

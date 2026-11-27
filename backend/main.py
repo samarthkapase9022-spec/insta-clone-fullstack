@@ -631,3 +631,33 @@ async def get_notifications(current_user: str = Depends(get_current_user)):
         notifs.append(n)
     await notifications_collection.update_many({"recipient": current_user, "is_read": False}, {"$set": {"is_read": True}})
     return notifs
+@app.delete("/users/me")
+async def delete_my_account(payload: dict = Body(...), current_user: str = Depends(get_current_user)):
+    password = payload.get("password", "")
+    user = await users_collection.find_one({"username": current_user})
+    if not user or not verify_password(password, user["password"]):
+        raise HTTPException(status_code=400, detail="Incorrect password! Cannot delete account.")
+
+    # Delete user's posts, stories, messages, notifications, and calls
+    await posts_collection.delete_many({"username": current_user})
+    await stories_collection.delete_many({"username": current_user})
+    await messages_collection.delete_many({"$or": [{"sender": current_user}, {"receiver": current_user}]})
+    await notifications_collection.delete_many({"$or": [{"recipient": current_user}, {"actor": current_user}]})
+    await calls_collection.delete_many({"$or": [{"caller": current_user}, {"callee": current_user}]})
+
+    # Remove username from other users' followers, following, requests, and blocks
+    await users_collection.update_many(
+        {},
+        {
+            "$pull": {
+                "followers": current_user,
+                "following": current_user,
+                "follow_requests": current_user,
+                "blocked_users": current_user
+            }
+        }
+    )
+
+    # Finally delete the user account
+    await users_collection.delete_one({"username": current_user})
+    return {"message": "Your account and all associated data have been permanently deleted."}
