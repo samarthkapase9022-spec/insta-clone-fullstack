@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import "./App.css";
 
 const API_URL = "https://insta-clone-fullstack-0t7a.onrender.com";
@@ -79,15 +79,12 @@ function App() {
   const [currentUser, setCurrentUser] = useState(localStorage.getItem("username") || "");
   const [darkMode, setDarkMode] = useState(false);
 
-  // Navigation Tabs: 'home' | 'search' | 'explore' | 'reels' | 'messages' | 'notifications' | 'create' | 'profile' | 'settings'
   const [activeTab, setActiveTab] = useState("home");
   const [viewedUsername, setViewedUsername] = useState("");
 
-  // Auth
   const [isSignup, setIsSignup] = useState(false);
   const [authForm, setAuthForm] = useState({ username: "", email: "", password: "", full_name: "" });
 
-  // Feed, Carousel Index, Post Menu & Edit
   const [posts, setPosts] = useState([]);
   const [carouselIdx, setCarouselIdx] = useState({});
   const [openMenuPostId, setOpenMenuPostId] = useState(null);
@@ -95,11 +92,10 @@ function App() {
   const [heartBurstId, setHeartBurstId] = useState(null);
   const [commentText, setCommentText] = useState({});
   const [selectedPostModal, setSelectedPostModal] = useState(null);
+  const lastTapRef = useRef(0);
 
-  // Reels
   const [reels, setReels] = useState([]);
 
-  // Stories & Story Creator Modal
   const [stories, setStories] = useState([]);
   const [activeStory, setActiveStory] = useState(null);
   const [showStoryCreator, setShowStoryCreator] = useState(false);
@@ -107,30 +103,26 @@ function App() {
   const [storyReplyText, setStoryReplyText] = useState("");
   const [highlightTitle, setHighlightTitle] = useState("");
 
-  // Create Post (Carousel / Video / Location)
   const [postFiles, setPostFiles] = useState([]);
   const [caption, setCaption] = useState("");
   const [location, setLocation] = useState("");
   const [isReelUpload, setIsReelUpload] = useState(false);
   const [uploading, setUploading] = useState(false);
 
-  // Search, Users & Profile
   const [allUsers, setAllUsers] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState({ users: [], posts: [] });
   const [profileData, setProfileData] = useState(null);
-  const [profileSubTab, setProfileSubTab] = useState("posts"); // 'posts' | 'saved' | 'tagged'
+  const [profileSubTab, setProfileSubTab] = useState("posts");
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [editForm, setEditForm] = useState({ full_name: "", bio: "", is_private: false });
-  const [listModal, setListModal] = useState(null); // { title: 'Followers', users: [] }
+  const [listModal, setListModal] = useState(null);
 
-  // Direct Messages
   const [selectedChatUser, setSelectedChatUser] = useState(null);
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
   const [replyToMsg, setReplyToMsg] = useState("");
 
-  // Notifications & Security
   const [notifications, setNotifications] = useState([]);
   const [passForm, setPassForm] = useState({ old_password: "", new_password: "" });
 
@@ -244,7 +236,6 @@ function App() {
     setCurrentUser("");
   };
 
-  // Create Post (Multiple Carousel Images / Video)
   const handleCreatePost = async (e) => {
     e.preventDefault();
     if (postFiles.length === 0) return alert("Select at least one image or video!");
@@ -286,6 +277,15 @@ function App() {
     setHeartBurstId(post._id);
     setTimeout(() => setHeartBurstId(null), 850);
     if (!post.likes?.includes(currentUser)) handleLike(post._id);
+  };
+
+  // Touch support for Mobile Double-Tap
+  const handleTouchTap = (post) => {
+    const now = Date.now();
+    if (now - lastTapRef.current < 300) {
+      handleDoubleTap(post);
+    }
+    lastTapRef.current = now;
   };
 
   const handleComment = async (e, postId) => {
@@ -341,7 +341,6 @@ function App() {
     alert("Report submitted to moderation team.");
   };
 
-  // Interactive Stories
   const handleCreateStory = async (e) => {
     e.preventDefault();
     if (!storyForm.file) return;
@@ -402,7 +401,6 @@ function App() {
     alert("Added to your Profile Highlights!");
   };
 
-  // Search, Follow, Block & Profile
   const handleSearch = async (q) => {
     setSearchQuery(q);
     const res = await fetch(`${API_URL}/users/search?q=${encodeURIComponent(q)}`, { headers: authHeaders });
@@ -449,7 +447,6 @@ function App() {
     fetchAllUsers();
   };
 
-  // Direct Messages
   const fetchMessages = async (otherUser) => {
     const res = await fetch(`${API_URL}/messages/${otherUser}`, { headers: authHeaders });
     if (res.ok) setMessages(await res.json());
@@ -515,7 +512,6 @@ function App() {
     setPassForm({ old_password: "", new_password: "" });
   };
 
-  // Helper to render clickable #hashtags and @mentions
   const renderFormattedCaption = (text) => {
     return text.split(" ").map((word, i) => {
       if (word.startsWith("#")) {
@@ -536,11 +532,10 @@ function App() {
     });
   };
 
-  // --- AUTH SCREEN ---
   if (!token) {
     return (
       <div className="ig-auth-box">
-        <div className="ig-wordmark" style={{ fontSize: "44px" }}>Instagram</div>
+        <div className="ig-wordmark" style={{ fontSize: "44px", display: "block" }}>Instagram</div>
         <form onSubmit={handleAuth}>
           {isSignup && (
             <>
@@ -574,7 +569,23 @@ function App() {
 
   return (
     <div className={`ig-shell ${darkMode ? "dark-mode" : ""}`}>
-      {/* LEFT NAVIGATION SIDEBAR */}
+      {/* MOBILE TOP HEADER */}
+      <header className="ig-mobile-header">
+        <div className="ig-mobile-logo" onClick={() => { setActiveTab("home"); fetchFeed(); }}>Instagram</div>
+        <div className="ig-mobile-top-actions">
+          <button className="ig-svg-btn" onClick={() => setDarkMode(!darkMode)} title="Theme">
+            <span style={{ fontSize: "18px" }}>{darkMode ? "☀️" : "🌙"}</span>
+          </button>
+          <button className="ig-svg-btn" onClick={() => { setActiveTab("notifications"); fetchNotifications(); fetchAllUsers(); }}>
+            <Icons.Bell active={activeTab === "notifications"} />
+          </button>
+          <button className="ig-svg-btn" onClick={() => { setActiveTab("messages"); fetchAllUsers(); }}>
+            <Icons.Messenger active={activeTab === "messages"} />
+          </button>
+        </div>
+      </header>
+
+      {/* DESKTOP LEFT SIDEBAR */}
       <aside className="ig-sidebar">
         <div>
           <div className="ig-wordmark" onClick={() => setActiveTab("home")}>Instagram</div>
@@ -619,6 +630,27 @@ function App() {
           </button>
         </div>
       </aside>
+
+      {/* MOBILE BOTTOM NAVIGATION BAR (5 PRIMARY ICONS) */}
+      <nav className="ig-mobile-bottom-nav">
+        <button className="ig-svg-btn" onClick={() => { setActiveTab("home"); fetchFeed(); }}>
+          <Icons.Home active={activeTab === "home"} />
+        </button>
+        <button className="ig-svg-btn" onClick={() => { setActiveTab("search"); handleSearch(""); }}>
+          <Icons.Search />
+        </button>
+        <button className="ig-svg-btn" onClick={() => setActiveTab("create")}>
+          <Icons.Create />
+        </button>
+        <button className="ig-svg-btn" onClick={() => { setActiveTab("reels"); fetchReels(); }}>
+          <Icons.Reels active={activeTab === "reels"} />
+        </button>
+        <button className="ig-svg-btn" onClick={() => openProfile(currentUser)}>
+          <div className="ig-avatar-32" style={{ width: "26px", height: "26px", fontSize: "11px", border: activeTab === "profile" ? "2px solid var(--text-main)" : "none" }}>
+            {currentUser[0]}
+          </div>
+        </button>
+      </nav>
 
       {/* MAIN CONTENT VIEWPORT */}
       <main className="ig-main">
@@ -671,7 +703,7 @@ function App() {
                         </div>
                       </div>
 
-                      <button style={{ background: "none", border: "none", color: "var(--text-main)", cursor: "pointer", fontWeight: "bold" }} onClick={() => setOpenMenuPostId(openMenuPostId === post._id ? null : post._id)}>
+                      <button style={{ background: "none", border: "none", color: "var(--text-main)", cursor: "pointer", fontWeight: "bold", padding: "4px 8px" }} onClick={() => setOpenMenuPostId(openMenuPostId === post._id ? null : post._id)}>
                         •••
                       </button>
 
@@ -693,7 +725,7 @@ function App() {
                     </div>
 
                     {/* Carousel / Video Media */}
-                    <div className="ig-media-box" onDoubleClick={() => handleDoubleTap(post)}>
+                    <div className="ig-media-box" onDoubleClick={() => handleDoubleTap(post)} onTouchEnd={() => handleTouchTap(post)}>
                       {activeMedia?.type === "video" ? (
                         <video src={activeMedia.url} controls playsInline />
                       ) : (
@@ -723,42 +755,44 @@ function App() {
                       )}
                     </div>
 
-                    {/* Action Icons */}
-                    <div className="ig-action-bar">
-                      <div className="ig-action-left">
-                        <button className="ig-svg-btn" onClick={() => handleLike(post._id)}><Icons.Heart liked={isLiked} /></button>
-                        <button className="ig-svg-btn" onClick={() => setSelectedPostModal(post)}><Icons.Comment /></button>
-                        <button className="ig-svg-btn" onClick={() => { navigator.clipboard.writeText(activeMedia?.url); alert("Post link copied!"); }}>
-                          <Icons.Messenger active={false} />
-                        </button>
+                    <div className="ig-post-body">
+                      {/* Action Icons */}
+                      <div className="ig-action-bar">
+                        <div className="ig-action-left">
+                          <button className="ig-svg-btn" onClick={() => handleLike(post._id)}><Icons.Heart liked={isLiked} /></button>
+                          <button className="ig-svg-btn" onClick={() => setSelectedPostModal(post)}><Icons.Comment /></button>
+                          <button className="ig-svg-btn" onClick={() => { navigator.clipboard.writeText(activeMedia?.url); alert("Post link copied!"); }}>
+                            <Icons.Messenger active={false} />
+                          </button>
+                        </div>
+                        <button className="ig-svg-btn" onClick={() => handleSavePost(post._id)}><Icons.Bookmark saved={isSaved} /></button>
                       </div>
-                      <button className="ig-svg-btn" onClick={() => handleSavePost(post._id)}><Icons.Bookmark saved={isSaved} /></button>
+
+                      <div style={{ fontWeight: "600", fontSize: "14px", marginBottom: "6px" }}>{post.likes?.length || 0} likes</div>
+
+                      {post.caption && (
+                        <div style={{ fontSize: "14px", marginBottom: "6px" }}>
+                          <strong style={{ cursor: "pointer" }} onClick={() => openProfile(post.username)}>{post.username}</strong>{" "}
+                          {renderFormattedCaption(post.caption)}
+                        </div>
+                      )}
+
+                      {post.comments?.slice(-2).map((c, i) => (
+                        <div key={i} style={{ fontSize: "13px", marginBottom: "3px" }}>
+                          <strong>{c.username}</strong> {c.text}
+                        </div>
+                      ))}
+
+                      <form style={{ display: "flex", marginTop: "8px" }} onSubmit={(e) => handleComment(e, post._id)}>
+                        <input
+                          style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--text-main)", fontSize: "14px" }}
+                          placeholder="Add a comment..."
+                          value={commentText[post._id] || ""}
+                          onChange={(e) => setCommentText({ ...commentText, [post._id]: e.target.value })}
+                        />
+                        {commentText[post._id]?.trim() && <button type="submit" className="ig-link-btn">Post</button>}
+                      </form>
                     </div>
-
-                    <div style={{ fontWeight: "600", fontSize: "14px", marginBottom: "6px" }}>{post.likes?.length || 0} likes</div>
-
-                    {post.caption && (
-                      <div style={{ fontSize: "14px", marginBottom: "6px" }}>
-                        <strong style={{ cursor: "pointer" }} onClick={() => openProfile(post.username)}>{post.username}</strong>{" "}
-                        {renderFormattedCaption(post.caption)}
-                      </div>
-                    )}
-
-                    {post.comments?.slice(-2).map((c, i) => (
-                      <div key={i} style={{ fontSize: "13px", marginBottom: "3px" }}>
-                        <strong>{c.username}</strong> {c.text}
-                      </div>
-                    ))}
-
-                    <form style={{ display: "flex", marginTop: "8px" }} onSubmit={(e) => handleComment(e, post._id)}>
-                      <input
-                        style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--text-main)", fontSize: "14px" }}
-                        placeholder="Add a comment..."
-                        value={commentText[post._id] || ""}
-                        onChange={(e) => setCommentText({ ...commentText, [post._id]: e.target.value })}
-                      />
-                      {commentText[post._id]?.trim() && <button type="submit" className="ig-link-btn">Post</button>}
-                    </form>
                   </article>
                 );
               })}
@@ -800,9 +834,9 @@ function App() {
           </div>
         )}
 
-        {/* 2. SEARCH (USERS & HASHTAGS) */}
+        {/* 2. SEARCH */}
         {activeTab === "search" && (
-          <div className="ig-feed-column">
+          <div className="ig-feed-column" style={{ padding: "0 12px" }}>
             <h2 style={{ marginBottom: "14px" }}>Search</h2>
             <input className="ig-input" placeholder="Search @users or #hashtags..." value={searchQuery} onChange={(e) => handleSearch(e.target.value)} />
             <h4 style={{ margin: "16px 0 10px", color: "var(--text-muted)" }}>Accounts</h4>
@@ -897,7 +931,7 @@ function App() {
 
         {/* 5. MESSAGES / DM */}
         {activeTab === "messages" && (
-          <div className="ig-inbox">
+          <div className={`ig-inbox ${selectedChatUser ? "chat-open" : ""}`}>
             <div className="ig-inbox-list">
               <div style={{ padding: "18px", fontWeight: "700", borderBottom: "1px solid var(--border-line)" }}>{currentUser}</div>
               <div style={{ overflowY: "auto", flex: 1 }}>
@@ -916,7 +950,8 @@ function App() {
             <div className="ig-chat-pane">
               {selectedChatUser ? (
                 <>
-                  <div style={{ padding: "14px 18px", borderBottom: "1px solid var(--border-line)", display: "flex", alignItems: "center", gap: "10px", fontWeight: "600" }}>
+                  <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border-line)", display: "flex", alignItems: "center", gap: "10px", fontWeight: "600" }}>
+                    <button className="mobile-back-btn" onClick={() => setSelectedChatUser(null)}>←</button>
                     <div className="ig-avatar-32">{selectedChatUser.username[0]}</div>
                     <span style={{ cursor: "pointer" }} onClick={() => openProfile(selectedChatUser.username)}>{selectedChatUser.username}</span>
                   </div>
@@ -971,9 +1006,9 @@ function App() {
           </div>
         )}
 
-        {/* 6. NOTIFICATIONS & FOLLOW REQUESTS */}
+        {/* 6. NOTIFICATIONS */}
         {activeTab === "notifications" && (
-          <div className="ig-feed-column">
+          <div className="ig-feed-column" style={{ padding: "0 12px" }}>
             <h2 style={{ marginBottom: "16px" }}>Notifications</h2>
             {meObj?.follow_requests?.length > 0 && (
               <div style={{ padding: "12px", border: "1px solid var(--border-line)", borderRadius: "8px", marginBottom: "16px" }}>
@@ -998,10 +1033,10 @@ function App() {
           </div>
         )}
 
-        {/* 7. CREATE POST (CAROUSEL / VIDEO / LOCATION) */}
+        {/* 7. CREATE POST */}
         {activeTab === "create" && (
-          <div className="ig-feed-column">
-            <div style={{ border: "1px solid var(--border-line)", borderRadius: "12px", padding: "24px" }}>
+          <div className="ig-feed-column" style={{ padding: "0 12px" }}>
+            <div style={{ border: "1px solid var(--border-line)", borderRadius: "12px", padding: "20px" }}>
               <h3 style={{ marginBottom: "16px" }}>Create new post</h3>
               <form onSubmit={handleCreatePost}>
                 <label style={{ fontSize: "13px", color: "var(--text-muted)" }}>Select Image(s) for Carousel or a Video:</label>
@@ -1039,13 +1074,17 @@ function App() {
               </div>
 
               <div style={{ flex: 1 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "10px", flexWrap: "wrap" }}>
                   <span style={{ fontSize: "20px" }}>{profileData.user.username}</span>
                   {profileData.user.is_private && <span style={{ fontSize: "12px", background: "var(--bg-input)", padding: "2px 8px", borderRadius: "12px" }}>🔒 Private</span>}
                   {viewedUsername === currentUser ? (
-                    <button className="ig-btn-gray" onClick={() => setIsEditingProfile(!isEditingProfile)}>
-                      {isEditingProfile ? "Cancel" : "Edit profile"}
-                    </button>
+                    <>
+                      <button className="ig-btn-gray" onClick={() => setIsEditingProfile(!isEditingProfile)}>
+                        {isEditingProfile ? "Cancel" : "Edit profile"}
+                      </button>
+                      <button className="ig-btn-gray" onClick={() => setActiveTab("settings")} title="Settings">⚙️</button>
+                      <button className="ig-btn-gray" style={{ color: "#ff3040" }} onClick={handleLogout}>Logout</button>
+                    </>
                   ) : (
                     <>
                       <button className={profileData.user.followers?.includes(currentUser) ? "ig-btn-gray" : "ig-btn-blue"} onClick={() => handleFollow(viewedUsername)}>
@@ -1058,7 +1097,7 @@ function App() {
                   )}
                 </div>
 
-                <div style={{ display: "flex", gap: "28px", margin: "18px 0", fontSize: "15px" }}>
+                <div style={{ display: "flex", justifyContent: "center", gap: "24px", margin: "16px 0", fontSize: "15px" }}>
                   <span><strong>{profileData.posts.length}</strong> posts</span>
                   <span style={{ cursor: "pointer" }} onClick={() => setListModal({ title: "Followers", users: profileData.user.followers || [] })}>
                     <strong>{profileData.user.followers?.length || 0}</strong> followers
@@ -1069,7 +1108,7 @@ function App() {
                 </div>
 
                 {isEditingProfile ? (
-                  <form onSubmit={handleProfileUpdate} style={{ maxWidth: "360px" }}>
+                  <form onSubmit={handleProfileUpdate} style={{ maxWidth: "360px", margin: "0 auto" }}>
                     <input className="ig-input" placeholder="Full Name" value={editForm.full_name} onChange={(e) => setEditForm({ ...editForm, full_name: e.target.value })} />
                     <input className="ig-input" placeholder="Bio" value={editForm.bio} onChange={(e) => setEditForm({ ...editForm, bio: e.target.value })} />
                     <label style={{ display: "flex", alignItems: "center", gap: "8px", margin: "8px 0", fontSize: "14px" }}>
@@ -1087,7 +1126,6 @@ function App() {
               </div>
             </div>
 
-            {/* Story Highlights Row */}
             {profileData.user.highlights?.length > 0 && (
               <div className="ig-stories" style={{ padding: "16px 24px", borderBottom: "1px solid var(--border-line)" }}>
                 {profileData.user.highlights.map((h, i) => (
@@ -1130,9 +1168,9 @@ function App() {
           </div>
         )}
 
-        {/* 9. PRIVACY & SECURITY SETTINGS */}
+        {/* 9. SETTINGS */}
         {activeTab === "settings" && (
-          <div className="ig-feed-column">
+          <div className="ig-feed-column" style={{ padding: "0 12px" }}>
             <h2 style={{ marginBottom: "20px" }}>Privacy & Security</h2>
             <div style={{ border: "1px solid var(--border-line)", borderRadius: "8px", padding: "16px", marginBottom: "20px" }}>
               <h4 style={{ marginBottom: "10px" }}>Change Password</h4>
@@ -1171,8 +1209,6 @@ function App() {
       </main>
 
       {/* --- MODALS --- */}
-
-      {/* Story Creator Modal */}
       {showStoryCreator && (
         <div className="ig-backdrop" onClick={() => setShowStoryCreator(false)}>
           <div className="ig-modal-card" onClick={(e) => e.stopPropagation()}>
@@ -1198,10 +1234,9 @@ function App() {
         </div>
       )}
 
-      {/* Fullscreen Interactive Story Viewer */}
       {activeStory && (
         <div className="ig-backdrop" onClick={() => setActiveStory(null)}>
-          <div style={{ width: "360px", height: "640px", background: "#000", borderRadius: "12px", position: "relative", overflow: "hidden", display: "flex", flexDirection: "column" }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ width: "94%", maxWidth: "360px", height: "84vh", background: "#000", borderRadius: "12px", position: "relative", overflow: "hidden", display: "flex", flexDirection: "column" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ position: "absolute", top: 0, left: 0, right: 0, padding: "14px", background: "linear-gradient(to bottom, rgba(0,0,0,0.8), transparent)", color: "#fff", zIndex: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <strong>@{activeStory.username} {activeStory.close_friends_only && "💚"}</strong>
@@ -1255,7 +1290,6 @@ function App() {
         </div>
       )}
 
-      {/* Edit Post Modal */}
       {editingPost && (
         <div className="ig-backdrop" onClick={() => setEditingPost(null)}>
           <div className="ig-modal-card" onClick={(e) => e.stopPropagation()}>
@@ -1269,7 +1303,6 @@ function App() {
         </div>
       )}
 
-      {/* Followers / Following Modal */}
       {listModal && (
         <div className="ig-backdrop" onClick={() => setListModal(null)}>
           <div className="ig-modal-card" onClick={(e) => e.stopPropagation()}>
@@ -1286,7 +1319,6 @@ function App() {
         </div>
       )}
 
-      {/* Post Detail Modal */}
       {selectedPostModal && (
         <div className="ig-backdrop" onClick={() => setSelectedPostModal(null)}>
           <div className="ig-post-modal" onClick={(e) => e.stopPropagation()}>
