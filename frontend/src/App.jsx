@@ -3,7 +3,37 @@ import "./App.css";
 
 const API_URL = "https://insta-clone-fullstack-0t7a.onrender.com";
 
-// Crisp Instagram SVG Icons
+// Relative Time Helper ("Just now", "5m ago", "2h ago")
+function formatTimeAgo(isoString) {
+  if (!isoString) return "";
+  const date = new Date(isoString.endsWith("Z") ? isoString : isoString + "Z");
+  const diffSec = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (diffSec < 60) return "Just now";
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDay = Math.floor(diffHr / 24);
+  if (diffDay < 7) return `${diffDay}d ago`;
+  return date.toLocaleDateString();
+}
+
+// Chat Bubble Clock Helper ("07:25 PM")
+function formatChatTime(isoString) {
+  if (!isoString) return "";
+  const date = new Date(isoString.endsWith("Z") ? isoString : isoString + "Z");
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+// Check if user was active within last 65 seconds
+function getOnlineStatus(lastSeenIso) {
+  if (!lastSeenIso) return { isOnline: false, label: "Offline" };
+  const date = new Date(lastSeenIso.endsWith("Z") ? lastSeenIso : lastSeenIso + "Z");
+  const diffSec = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (diffSec <= 65) return { isOnline: true, label: "Active now" };
+  return { isOnline: false, label: `Active ${formatTimeAgo(lastSeenIso)}` };
+}
+
 const Icons = {
   Home: ({ active }) => (
     <svg width="24" height="24" viewBox="0 0 24 24" fill={active ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2">
@@ -67,6 +97,17 @@ const Icons = {
       <polygon points="20 21 12 13.44 4 21 4 3 20 3 20 21" />
     </svg>
   ),
+  Phone: () => (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
+    </svg>
+  ),
+  VideoCall: () => (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <polygon points="23 7 16 12 23 17 23 7" />
+      <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+    </svg>
+  ),
   Verified: () => (
     <svg width="14" height="14" viewBox="0 0 40 40" fill="#0095f6">
       <path d="M19.998 3.094 14.638 0l-2.972 5.15H5.432v6.354L0 14.64 3.094 20 0 25.359l5.432 3.137v5.905h5.975L14.638 40l5.36-3.094L25.358 40l3.232-5.6h6.162v-6.01L40 25.359 36.905 20 40 14.641l-5.248-3.03v-6.46h-6.419L25.358 0l-5.36 3.094Zm7.415 11.225 2.254 2.287-11.43 11.5-6.835-6.93 2.244-2.258 4.587 4.581 9.18-9.18Z" />
@@ -82,14 +123,12 @@ function App() {
   const [activeTab, setActiveTab] = useState("home");
   const [viewedUsername, setViewedUsername] = useState("");
 
-  // Auth & Server Wake-Up State
   const [isSignup, setIsSignup] = useState(false);
   const [authForm, setAuthForm] = useState({ username: "", email: "", password: "", full_name: "" });
   const [authLoading, setAuthLoading] = useState(false);
   const [feedLoading, setFeedLoading] = useState(false);
   const [serverWaking, setServerWaking] = useState(false);
 
-  // Feed
   const [posts, setPosts] = useState([]);
   const [carouselIdx, setCarouselIdx] = useState({});
   const [openMenuPostId, setOpenMenuPostId] = useState(null);
@@ -99,10 +138,8 @@ function App() {
   const [selectedPostModal, setSelectedPostModal] = useState(null);
   const lastTapRef = useRef(0);
 
-  // Reels
   const [reels, setReels] = useState([]);
 
-  // Stories & Auto-Progress Viewer
   const [stories, setStories] = useState([]);
   const [activeStoryIndex, setActiveStoryIndex] = useState(null);
   const [storyProgress, setStoryProgress] = useState(0);
@@ -111,14 +148,12 @@ function App() {
   const [storyReplyText, setStoryReplyText] = useState("");
   const [highlightTitle, setHighlightTitle] = useState("");
 
-  // Create Post
   const [postFiles, setPostFiles] = useState([]);
   const [caption, setCaption] = useState("");
   const [location, setLocation] = useState("");
   const [isReelUpload, setIsReelUpload] = useState(false);
   const [uploading, setUploading] = useState(false);
 
-  // Search, Users & Profile
   const [allUsers, setAllUsers] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState({ users: [], posts: [] });
@@ -128,7 +163,6 @@ function App() {
   const [editForm, setEditForm] = useState({ full_name: "", bio: "", is_private: false });
   const [listModal, setListModal] = useState(null);
 
-  // Direct Messages & Badges
   const [selectedChatUser, setSelectedChatUser] = useState(null);
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
@@ -136,7 +170,14 @@ function App() {
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
   const [hasUnreadDM, setHasUnreadDM] = useState(false);
 
-  // Notifications & Settings
+  // Live WebRTC Call State
+  const [incomingCall, setIncomingCall] = useState(null);
+  const [activeCall, setActiveCall] = useState(null);
+  const pcRef = useRef(null);
+  const localStreamRef = useRef(null);
+  const localVideoRef = useRef(null);
+  const remoteVideoRef = useRef(null);
+
   const [notifications, setNotifications] = useState([]);
   const [passForm, setPassForm] = useState({ old_password: "", new_password: "" });
 
@@ -149,8 +190,52 @@ function App() {
       fetchStories();
       fetchAllUsers();
       fetchNotifications(true);
+      pingServer();
     }
   }, [token]);
+
+  // Heartbeat Ping every 15s + Incoming Call Check every 4s
+  useEffect(() => {
+    if (!token) return;
+    const pingTimer = setInterval(() => {
+      pingServer();
+      fetchAllUsers();
+    }, 15000);
+
+    const callPollTimer = setInterval(async () => {
+      if (!activeCall && !incomingCall) {
+        const res = await fetch(`${API_URL}/calls/incoming`, { headers: authHeaders });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data._id) setIncomingCall(data);
+        }
+      }
+      if (activeCall && activeCall.status === "ringing") {
+        const res = await fetch(`${API_URL}/calls/${activeCall.call_id}`, { headers: authHeaders });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.status === "connected" && data.answer && pcRef.current) {
+            await pcRef.current.setRemoteDescription(new RTCSessionDescription(data.answer));
+            setActiveCall((prev) => ({ ...prev, status: "connected" }));
+          } else if (data.status === "ended") {
+            cleanupWebRTC();
+          }
+        }
+      }
+      if (activeCall && activeCall.status === "connected") {
+        const res = await fetch(`${API_URL}/calls/${activeCall.call_id}`, { headers: authHeaders });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.status === "ended") cleanupWebRTC();
+        }
+      }
+    }, 4000);
+
+    return () => {
+      clearInterval(pingTimer);
+      clearInterval(callPollTimer);
+    };
+  }, [token, activeCall, incomingCall]);
 
   // Auto-advance 5s Story Progress Timer
   useEffect(() => {
@@ -169,13 +254,12 @@ function App() {
             return 0;
           }
         }
-        return prev + 2; // 50 steps * 100ms = 5 seconds
+        return prev + 2;
       });
     }, 100);
     return () => clearInterval(interval);
   }, [activeStoryIndex, stories.length]);
 
-  // Poll DM & Notifications silently every 8s
   useEffect(() => {
     if (!token) return;
     const bgTimer = setInterval(() => {
@@ -183,10 +267,135 @@ function App() {
       if (activeTab === "messages" && selectedChatUser) {
         fetchMessages(selectedChatUser.username);
       }
-    }, 8000);
+    }, 5000);
     return () => clearInterval(bgTimer);
   }, [token, activeTab, selectedChatUser]);
 
+  const pingServer = async () => {
+    await fetch(`${API_URL}/users/ping`, { method: "POST", headers: authHeaders });
+  };
+
+  // --- WEBRTC CALLING FUNCTIONS ---
+  const createPeerConnection = () => {
+    const pc = new RTCPeerConnection({
+      iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }],
+    });
+    pc.ontrack = (event) => {
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = event.streams[0];
+      }
+    };
+    return pc;
+  };
+
+  const waitForIceGathering = (pc) =>
+    new Promise((resolve) => {
+      if (pc.iceGatheringState === "complete") return resolve();
+      const checkState = () => {
+        if (pc.iceGatheringState === "complete") {
+          pc.removeEventListener("icegatheringstatechange", checkState);
+          resolve();
+        }
+      };
+      pc.addEventListener("icegatheringstatechange", checkState);
+      setTimeout(resolve, 2500);
+    });
+
+  const startCall = async (targetUser, callType) => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: callType === "video",
+      });
+      localStreamRef.current = stream;
+      const pc = createPeerConnection();
+      pcRef.current = pc;
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      await waitForIceGathering(pc);
+
+      const res = await fetch(`${API_URL}/calls/initiate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders },
+        body: JSON.stringify({
+          callee: targetUser.username,
+          call_type: callType,
+          offer: pc.localDescription,
+        }),
+      });
+      if (res.ok) {
+        const { call_id } = await res.json();
+        setActiveCall({ call_id, peerUser: targetUser.username, call_type: callType, status: "ringing" });
+        setTimeout(() => {
+          if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+        }, 100);
+      }
+    } catch (err) {
+      alert("Microphone/Camera permission denied or unavailable: " + err.message);
+    }
+  };
+
+  const acceptIncomingCall = async () => {
+    if (!incomingCall) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: incomingCall.call_type === "video",
+      });
+      localStreamRef.current = stream;
+      const pc = createPeerConnection();
+      pcRef.current = pc;
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+
+      await pc.setRemoteDescription(new RTCSessionDescription(incomingCall.offer));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      await waitForIceGathering(pc);
+
+      await fetch(`${API_URL}/calls/${incomingCall._id}/answer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders },
+        body: JSON.stringify({ answer: pc.localDescription }),
+      });
+
+      setActiveCall({
+        call_id: incomingCall._id,
+        peerUser: incomingCall.caller,
+        call_type: incomingCall.call_type,
+        status: "connected",
+      });
+      setIncomingCall(null);
+      setTimeout(() => {
+        if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+      }, 100);
+    } catch (err) {
+      alert("Could not start call: " + err.message);
+    }
+  };
+
+  const endOrDeclineCall = async (callId) => {
+    if (callId) {
+      await fetch(`${API_URL}/calls/${callId}/end`, { method: "POST", headers: authHeaders });
+    }
+    setIncomingCall(null);
+    cleanupWebRTC();
+  };
+
+  const cleanupWebRTC = () => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((t) => t.stop());
+      localStreamRef.current = null;
+    }
+    if (pcRef.current) {
+      pcRef.current.close();
+      pcRef.current = null;
+    }
+    setActiveCall(null);
+  };
+
+  // --- EXISTING API CALLS ---
   const fetchFeed = async (isInitial = false) => {
     if (isInitial) setFeedLoading(true);
     const wakeTimer = setTimeout(() => {
@@ -555,6 +764,7 @@ function App() {
     setNewMessage("");
     setReplyToMsg("");
     fetchMessages(selectedChatUser.username);
+    fetchAllUsers();
   };
 
   const handleSendChatImage = async (e) => {
@@ -620,7 +830,6 @@ function App() {
     });
   };
 
-  // --- AUTH SCREEN ---
   if (!token) {
     return (
       <div className="ig-auth-box">
@@ -660,6 +869,7 @@ function App() {
 
   const meObj = allUsers.find((u) => u.username === currentUser);
   const suggestedUsers = allUsers.filter((u) => u.username !== currentUser).slice(0, 5);
+  const activeChatLiveUser = selectedChatUser ? allUsers.find((u) => u.username === selectedChatUser.username) || selectedChatUser : null;
 
   return (
     <div className={`ig-shell ${darkMode ? "dark-mode" : ""}`}>
@@ -788,7 +998,6 @@ function App() {
                 ))}
               </div>
 
-              {/* Skeleton Loader while initial feed fetches */}
               {feedLoading && posts.length === 0 ? (
                 <div style={{ padding: "12px" }}>
                   {[1, 2].map((n) => (
@@ -808,19 +1017,29 @@ function App() {
                   const activeMedia = mediaList[currentSlide] || mediaList[0];
                   const isLiked = post.likes?.includes(currentUser);
                   const isSaved = meObj?.saved_posts?.includes(post._id);
+                  const isAuthorFollowed = meObj?.following?.includes(post.username);
+                  const authorStatus = getOnlineStatus(post.author_last_seen);
 
                   return (
                     <article key={post._id} className="ig-post">
                       <div className="ig-post-top">
                         <div style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" }} onClick={() => openProfile(post.username)}>
-                          {post.user_pic ? (
-                            <img src={post.user_pic} alt={post.username} className="ig-avatar-32" />
-                          ) : (
-                            <div className="ig-avatar-32">{post.username[0]}</div>
-                          )}
+                          <div className="avatar-status-wrap">
+                            {post.user_pic ? (
+                              <img src={post.user_pic} alt={post.username} className="ig-avatar-32" />
+                            ) : (
+                              <div className="ig-avatar-32">{post.username[0]}</div>
+                            )}
+                            {isAuthorFollowed && authorStatus.isOnline && <span className="online-green-dot" />}
+                          </div>
                           <div>
                             <div style={{ fontWeight: "600", fontSize: "14px", display: "flex", alignItems: "center", gap: "4px" }}>
                               {post.username} <Icons.Verified />
+                              {post.created_at && (
+                                <span style={{ fontWeight: "400", fontSize: "12px", color: "var(--text-muted)" }}>
+                                  • {formatTimeAgo(post.created_at)}
+                                </span>
+                              )}
                             </div>
                             {post.location && <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>{post.location}</div>}
                           </div>
@@ -900,9 +1119,16 @@ function App() {
 
                         {post.comments?.slice(-2).map((c, i) => (
                           <div key={i} style={{ fontSize: "13px", marginBottom: "3px" }}>
-                            <strong>{c.username}</strong> {c.text}
+                            <strong>{c.username}</strong> {c.text}{" "}
+                            {c.created_at && <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>{formatTimeAgo(c.created_at)}</span>}
                           </div>
                         ))}
+
+                        {post.created_at && (
+                          <div style={{ fontSize: "10px", textTransform: "uppercase", color: "var(--text-muted)", marginTop: "6px", letterSpacing: "0.4px" }}>
+                            {formatTimeAgo(post.created_at)}
+                          </div>
+                        )}
 
                         <form style={{ display: "flex", marginTop: "8px" }} onSubmit={(e) => handleComment(e, post._id)}>
                           <input
@@ -937,13 +1163,19 @@ function App() {
               {suggestedUsers.map((u) => {
                 const isFollowing = u.followers?.includes(currentUser);
                 const isRequested = u.follow_requests?.includes(currentUser);
+                const statusInfo = getOnlineStatus(u.last_seen);
                 return (
                   <div key={u._id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" }} onClick={() => openProfile(u.username)}>
-                      <div className="ig-avatar-32">{u.username[0]}</div>
+                      <div className="avatar-status-wrap">
+                        <div className="ig-avatar-32">{u.username[0]}</div>
+                        {isFollowing && statusInfo.isOnline && <span className="online-green-dot" />}
+                      </div>
                       <div>
                         <div style={{ fontWeight: "600", fontSize: "13px" }}>{u.username}</div>
-                        <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>{u.is_private ? "Private Account" : "Suggested for you"}</div>
+                        <div style={{ fontSize: "11px", color: statusInfo.isOnline && isFollowing ? "#1ed760" : "var(--text-muted)" }}>
+                          {isFollowing ? statusInfo.label : u.is_private ? "Private Account" : "Suggested for you"}
+                        </div>
                       </div>
                     </div>
                     <button className="ig-link-btn" onClick={() => handleFollow(u.username)}>
@@ -962,15 +1194,24 @@ function App() {
             <h2 style={{ marginBottom: "14px" }}>Search</h2>
             <input className="ig-input" placeholder="Search @users or #hashtags..." value={searchQuery} onChange={(e) => handleSearch(e.target.value)} />
             <h4 style={{ margin: "16px 0 10px", color: "var(--text-muted)" }}>Accounts</h4>
-            {searchResults.users?.map((u) => (
-              <div key={u._id} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "8px 0", cursor: "pointer" }} onClick={() => openProfile(u.username)}>
-                <div className="ig-avatar-44">{u.username[0]}</div>
-                <div>
-                  <div style={{ fontWeight: "600" }}>{u.username}</div>
-                  <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>{u.full_name}</div>
+            {searchResults.users?.map((u) => {
+              const isFollowing = u.followers?.includes(currentUser);
+              const statusInfo = getOnlineStatus(u.last_seen);
+              return (
+                <div key={u._id} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "8px 0", cursor: "pointer" }} onClick={() => openProfile(u.username)}>
+                  <div className="avatar-status-wrap">
+                    <div className="ig-avatar-44">{u.username[0]}</div>
+                    {isFollowing && statusInfo.isOnline && <span className="online-green-dot" />}
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: "600" }}>{u.username}</div>
+                    <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+                      {u.full_name} {isFollowing ? `• ${statusInfo.label}` : ""}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {searchResults.posts?.length > 0 && (
               <>
                 <h4 style={{ margin: "16px 0 10px", color: "var(--text-muted)" }}>Matching Posts</h4>
@@ -1025,6 +1266,7 @@ function App() {
                       <div>
                         <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
                           <strong style={{ cursor: "pointer" }} onClick={() => openProfile(r.username)}>@{r.username}</strong>
+                          <span style={{ fontSize: "11px", color: "#ccc" }}>• {formatTimeAgo(r.created_at)}</span>
                           {r.username !== currentUser && (
                             <button className="ig-btn-blue" style={{ padding: "3px 10px", fontSize: "12px" }} onClick={() => handleFollow(r.username)}>Follow</button>
                           )}
@@ -1051,33 +1293,70 @@ function App() {
           </div>
         )}
 
-        {/* 5. MESSAGES / DM */}
+        {/* 5. MESSAGES / DM + ACTIVE STATUS + CALL BUTTONS */}
         {activeTab === "messages" && (
-          <div className={`ig-inbox ${selectedChatUser ? "chat-open" : ""}`}>
+          <div className={`ig-inbox ${activeChatLiveUser ? "chat-open" : ""}`}>
             <div className="ig-inbox-list">
               <div style={{ padding: "18px", fontWeight: "700", borderBottom: "1px solid var(--border-line)" }}>{currentUser}</div>
               <div style={{ overflowY: "auto", flex: 1 }}>
-                {allUsers.filter((u) => u.username !== currentUser).map((u) => (
-                  <div key={u._id} className={`ig-thread-row ${selectedChatUser?.username === u.username ? "active" : ""}`} onClick={() => { setSelectedChatUser(u); fetchMessages(u.username); }}>
-                    <div className="ig-avatar-44">{u.username[0]}</div>
-                    <div>
-                      <div style={{ fontWeight: "600", fontSize: "14px" }}>{u.username}</div>
-                      <div style={{ fontSize: "12px", color: "#1ed760" }}>● Active now</div>
+                {allUsers.filter((u) => u.username !== currentUser).map((u) => {
+                  const isFollowing = u.followers?.includes(currentUser) || meObj?.following?.includes(u.username);
+                  const statusInfo = getOnlineStatus(u.last_seen);
+                  return (
+                    <div key={u._id} className={`ig-thread-row ${activeChatLiveUser?.username === u.username ? "active" : ""}`} onClick={() => { setSelectedChatUser(u); fetchMessages(u.username); }}>
+                      <div className="avatar-status-wrap">
+                        <div className="ig-avatar-44">{u.username[0]}</div>
+                        {isFollowing && statusInfo.isOnline && <span className="online-green-dot" />}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={{ fontWeight: "600", fontSize: "14px" }}>{u.username}</span>
+                          {u.last_msg_time && (
+                            <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>{formatTimeAgo(u.last_msg_time)}</span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: "12px", color: statusInfo.isOnline && isFollowing ? "#1ed760" : "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {u.last_msg_text ? u.last_msg_text : isFollowing ? statusInfo.label : "Tap to chat"}
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
             <div className="ig-chat-pane">
-              {selectedChatUser ? (
+              {activeChatLiveUser ? (
                 <>
-                  <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border-line)", display: "flex", alignItems: "center", gap: "10px", fontWeight: "600" }}>
-                    <button className="mobile-back-btn" onClick={() => setSelectedChatUser(null)}>←</button>
-                    <div className="ig-avatar-32">{selectedChatUser.username[0]}</div>
-                    <span style={{ cursor: "pointer" }} onClick={() => openProfile(selectedChatUser.username)}>{selectedChatUser.username}</span>
+                  {/* Chat Header with Active Status & Audio/Video Call Icons */}
+                  <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border-line)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                      <button className="mobile-back-btn" onClick={() => setSelectedChatUser(null)}>←</button>
+                      <div className="avatar-status-wrap">
+                        <div className="ig-avatar-32">{activeChatLiveUser.username[0]}</div>
+                        {getOnlineStatus(activeChatLiveUser.last_seen).isOnline && <span className="online-green-dot" />}
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: "600", fontSize: "14px", cursor: "pointer" }} onClick={() => openProfile(activeChatLiveUser.username)}>
+                          {activeChatLiveUser.username}
+                        </div>
+                        <div style={{ fontSize: "11px", color: getOnlineStatus(activeChatLiveUser.last_seen).isOnline ? "#1ed760" : "var(--text-muted)" }}>
+                          {getOnlineStatus(activeChatLiveUser.last_seen).label}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+                      <button className="ig-svg-btn" title="Audio Call" onClick={() => startCall(activeChatLiveUser, "audio")}>
+                        <Icons.Phone />
+                      </button>
+                      <button className="ig-svg-btn" title="Video Call" onClick={() => startCall(activeChatLiveUser, "video")}>
+                        <Icons.VideoCall />
+                      </button>
+                    </div>
                   </div>
 
+                  {/* Chat Messages with Timestamps */}
                   <div className="ig-chat-scroll">
                     {messages.map((m) => {
                       const isMe = m.sender === currentUser;
@@ -1090,7 +1369,8 @@ function App() {
                             {m.media_url && <img src={m.media_url} alt="Chat media" style={{ maxWidth: "200px", borderRadius: "10px", display: "block", marginBottom: m.text ? "6px" : "0" }} />}
                             {m.text}
                           </div>
-                          <div style={{ display: "flex", gap: "8px", fontSize: "11px", color: "var(--text-muted)", marginTop: "3px" }}>
+                          <div style={{ display: "flex", gap: "8px", fontSize: "10px", color: "var(--text-muted)", marginTop: "3px", alignItems: "center" }}>
+                            {m.created_at && <span>{formatChatTime(m.created_at)}</span>}
                             {m.reactions?.map((r, i) => <span key={i}>{r.emoji}</span>)}
                             <span style={{ cursor: "pointer" }} onClick={() => handleReactMsg(m._id, "❤️")}>❤️</span>
                             <span style={{ cursor: "pointer" }} onClick={() => setReplyToMsg(m.text)}>Reply</span>
@@ -1121,7 +1401,7 @@ function App() {
               ) : (
                 <div style={{ margin: "auto", textAlign: "center", color: "var(--text-muted)" }}>
                   <h3>Your Messages</h3>
-                  <p style={{ fontSize: "13px" }}>Send private photos and messages to a friend.</p>
+                  <p style={{ fontSize: "13px" }}>Send private photos, messages, or start a live video call.</p>
                 </div>
               )}
             </div>
@@ -1151,7 +1431,8 @@ function App() {
                 <div key={n._id} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "10px 0", borderBottom: "1px solid var(--border-line)" }}>
                   <div className="ig-avatar-32">{n.actor[0]}</div>
                   <div style={{ fontSize: "14px" }}>
-                    <strong style={{ cursor: "pointer" }} onClick={() => openProfile(n.actor)}>{n.actor}</strong> {n.text}
+                    <strong style={{ cursor: "pointer" }} onClick={() => openProfile(n.actor)}>{n.actor}</strong> {n.text}{" "}
+                    {n.created_at && <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>• {formatTimeAgo(n.created_at)}</span>}
                   </div>
                 </div>
               ))
@@ -1203,6 +1484,14 @@ function App() {
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "10px", flexWrap: "wrap" }}>
                   <span style={{ fontSize: "20px" }}>{profileData.user.username}</span>
                   {profileData.user.is_private && <span style={{ fontSize: "12px", background: "var(--bg-input)", padding: "2px 8px", borderRadius: "12px" }}>🔒 Private</span>}
+                  {viewedUsername !== currentUser && (
+                    <span style={{ fontSize: "12px", color: getOnlineStatus(profileData.user.last_seen).isOnline ? "#1ed760" : "var(--text-muted)" }}>
+                      • {getOnlineStatus(profileData.user.last_seen).label}
+                    </span>
+                  )}
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", marginTop: "10px", flexWrap: "wrap" }}>
                   {viewedUsername === currentUser ? (
                     <>
                       <button className="ig-btn-gray" onClick={() => setIsEditingProfile(!isEditingProfile)}>
@@ -1217,8 +1506,8 @@ function App() {
                         {profileData.user.followers?.includes(currentUser) ? "Following" : profileData.user.follow_requests?.includes(currentUser) ? "Requested" : "Follow"}
                       </button>
                       <button className="ig-btn-gray" onClick={() => { setActiveTab("messages"); setSelectedChatUser(profileData.user); }}>Message</button>
+                      <button className="ig-btn-gray" onClick={() => startCall(profileData.user, "video")}>📹 Call</button>
                       <button className="ig-btn-gray" style={{ color: "#ff3040" }} onClick={() => handleBlockUser(viewedUsername)}>Block</button>
-                      <button className="ig-btn-gray" onClick={() => handleReport("user", viewedUsername)}>Report</button>
                     </>
                   )}
                 </div>
@@ -1326,7 +1615,7 @@ function App() {
               {meObj?.login_activity?.slice().reverse().map((act, idx) => (
                 <div key={idx} style={{ fontSize: "13px", padding: "8px 0", borderBottom: "1px solid var(--border-line)" }}>
                   <div><strong>IP:</strong> {act.ip}</div>
-                  <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>{act.device} • {act.time}</div>
+                  <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>{act.device} • {formatTimeAgo(act.time)}</div>
                 </div>
               ))}
             </div>
@@ -1334,7 +1623,49 @@ function App() {
         )}
       </main>
 
-      {/* --- MODALS --- */}
+      {/* --- INCOMING CALL RINGING MODAL --- */}
+      {incomingCall && !activeCall && (
+        <div className="ig-backdrop">
+          <div className="ig-call-ring-card">
+            <div className="ig-avatar-44" style={{ width: "74px", height: "74px", fontSize: "30px", margin: "0 auto 14px" }}>
+              {incomingCall.caller[0]}
+            </div>
+            <h3>@{incomingCall.caller}</h3>
+            <p style={{ color: "#aaa", fontSize: "14px", marginTop: "6px" }}>
+              Incoming Pixagram {incomingCall.call_type === "video" ? "Video" : "Audio"} Call...
+            </p>
+            <div style={{ display: "flex", justifyContent: "center", gap: "24px", marginTop: "24px" }}>
+              <button className="call-btn-decline" onClick={() => endOrDeclineCall(incomingCall._id)}>Decline</button>
+              <button className="call-btn-accept" onClick={acceptIncomingCall}>Accept</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- ACTIVE LIVE CALL SCREEN --- */}
+      {activeCall && (
+        <div className="ig-backdrop">
+          <div className="ig-active-call-box">
+            <video ref={remoteVideoRef} autoPlay playsInline className="remote-video-stream" />
+            {activeCall.call_type === "video" && (
+              <video ref={localVideoRef} autoPlay muted playsInline className="local-video-pip" />
+            )}
+            <div className="call-top-overlay">
+              <strong>@{activeCall.peerUser}</strong>
+              <span style={{ fontSize: "13px", color: "#1ed760" }}>
+                {activeCall.status === "ringing" ? "Ringing..." : "● Connected"}
+              </span>
+            </div>
+            <div className="call-bottom-controls">
+              <button className="call-btn-decline" onClick={() => endOrDeclineCall(activeCall.call_id)}>
+                End Call
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- STORY CREATOR MODAL --- */}
       {showStoryCreator && (
         <div className="ig-backdrop" onClick={() => setShowStoryCreator(false)}>
           <div className="ig-modal-card" onClick={(e) => e.stopPropagation()}>
@@ -1360,12 +1691,11 @@ function App() {
         </div>
       )}
 
-      {/* AUTO-PLAY STORY VIEWER WITH PROGRESS BARS */}
+      {/* --- STORY VIEWER WITH TIMESTAMP & PROGRESS BARS --- */}
       {activeStory && (
         <div className="ig-backdrop" onClick={() => setActiveStoryIndex(null)}>
           <div style={{ width: "94%", maxWidth: "360px", height: "84vh", background: "#000", borderRadius: "12px", position: "relative", overflow: "hidden", display: "flex", flexDirection: "column" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ position: "absolute", top: 0, left: 0, right: 0, padding: "10px 14px", background: "linear-gradient(to bottom, rgba(0,0,0,0.85), transparent)", color: "#fff", zIndex: 10 }}>
-              {/* Segmented Progress Bars */}
               <div className="story-progress-row">
                 {stories.map((_, i) => (
                   <div key={i} className="story-progress-track">
@@ -1380,7 +1710,14 @@ function App() {
               </div>
 
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "8px" }}>
-                <strong>@{activeStory.username} {activeStory.close_friends_only && "💚"}</strong>
+                <div>
+                  <strong>@{activeStory.username} {activeStory.close_friends_only && "💚"}</strong>
+                  {activeStory.created_at && (
+                    <span style={{ fontSize: "11px", color: "#ccc", marginLeft: "6px" }}>
+                      {formatTimeAgo(activeStory.created_at)}
+                    </span>
+                  )}
+                </div>
                 <button onClick={() => setActiveStoryIndex(null)} style={{ background: "none", border: "none", color: "#fff", fontSize: "18px", cursor: "pointer" }}>✕</button>
               </div>
               {activeStory.music_name && <div style={{ fontSize: "12px", marginTop: "4px" }}>🎵 {activeStory.music_name}</div>}
@@ -1468,13 +1805,16 @@ function App() {
             </div>
             <div className="ig-post-modal-right">
               <div style={{ padding: "14px", borderBottom: "1px solid var(--border-line)", display: "flex", justifyContent: "space-between" }}>
-                <strong>{selectedPostModal.username}</strong>
+                <strong>{selectedPostModal.username} • {formatTimeAgo(selectedPostModal.created_at)}</strong>
                 <button onClick={() => setSelectedPostModal(null)} style={{ background: "none", border: "none", color: "var(--text-main)", fontSize: "18px", cursor: "pointer" }}>✕</button>
               </div>
               <div style={{ flex: 1, padding: "14px", overflowY: "auto", fontSize: "14px" }}>
                 <p style={{ marginBottom: "12px" }}><strong>{selectedPostModal.username}</strong> {selectedPostModal.caption}</p>
                 {selectedPostModal.comments?.map((c, idx) => (
-                  <p key={idx} style={{ marginBottom: "8px" }}><strong>{c.username}</strong> {c.text}</p>
+                  <p key={idx} style={{ marginBottom: "8px" }}>
+                    <strong>{c.username}</strong> {c.text}{" "}
+                    <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>{formatTimeAgo(c.created_at)}</span>
+                  </p>
                 ))}
               </div>
               <form style={{ display: "flex", padding: "12px", borderTop: "1px solid var(--border-line)" }} onSubmit={(e) => handleComment(e, selectedPostModal._id)}>

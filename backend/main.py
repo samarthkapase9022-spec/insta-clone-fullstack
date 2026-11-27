@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, status, UploadFile, File, Form, Depends, Request
+from fastapi import FastAPI, HTTPException, status, UploadFile, File, Form, Depends, Request, Body
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List
@@ -6,31 +6,31 @@ from bson import ObjectId
 import cloudinary
 import cloudinary.uploader
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from database import (
     users_collection, posts_collection, stories_collection,
-    messages_collection, notifications_collection, reports_collection
+    messages_collection, notifications_collection, reports_collection,
+    calls_collection
 )
-from models import UserSignup, CommentCreate, ProfileUpdate, PasswordChange, PostUpdate, ReportCreate
 from auth import hash_password, verify_password, create_access_token, get_current_user
-from datetime import datetime, timedelta
 from models import (
     UserSignup, CommentCreate, ProfileUpdate, PasswordChange,
     PostUpdate, ReportCreate, StoryReply, PollVote, HighlightCreate,
     MessageSend, MessageReaction
 )
+
 cloudinary.config(
     cloud_name="rqlhcxj0",
     api_key="968642176593367",
     api_secret="JACg4N4X7TFdjuN_aSl7MJY0SOA"
 )
 
-app = FastAPI(title="Instagram Full Production API")
+app = FastAPI(title="Pixagram Full Production API")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://insta-clone-fullstack-frontend.vercel.app",
+        "https://pixagram-social.vercel.app",
         "http://localhost:5173",
         "*"
     ],
@@ -50,7 +50,7 @@ async def create_notification(recipient: str, actor: str, notif_type: str, text:
         "text": text,
         "post_id": post_id,
         "is_read": False,
-        "created_at": datetime.utcnow().isoformat()
+        "created_at": datetime.utcnow().isoformat() + "Z"
     })
 
 # --- MODULE 1 & 10: AUTH, PRIVACY & SECURITY ---
@@ -78,7 +78,8 @@ async def signup(user: UserSignup):
         "close_friends": [],
         "saved_posts": [],
         "not_interested": [],
-        "login_activity": []
+        "login_activity": [],
+        "last_seen": datetime.utcnow().isoformat() + "Z"
     }
     await users_collection.insert_one(new_user)
     return {"message": "Account created successfully!"}
@@ -89,19 +90,28 @@ async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends
     if not db_user or not verify_password(form_data.password, db_user["password"]):
         raise HTTPException(status_code=401, detail="Invalid email or password!")
 
-    # Record Login Activity
+    now_iso = datetime.utcnow().isoformat() + "Z"
     activity = {
         "ip": request.client.host if request.client else "Unknown",
         "device": request.headers.get("user-agent", "Unknown Browser")[:60],
-        "time": datetime.utcnow().isoformat()
+        "time": now_iso
     }
     await users_collection.update_one(
         {"_id": db_user["_id"]},
-        {"$push": {"login_activity": {"$each": [activity], "$slice": -10}}}
+        {
+            "$push": {"login_activity": {"$each": [activity], "$slice": -10}},
+            "$set": {"last_seen": now_iso}
+        }
     )
 
     token = create_access_token({"sub": db_user["email"], "username": db_user["username"]})
     return {"access_token": token, "token_type": "bearer", "username": db_user["username"]}
+
+@app.post("/users/ping")
+async def ping_active_status(current_user: str = Depends(get_current_user)):
+    now_iso = datetime.utcnow().isoformat() + "Z"
+    await users_collection.update_one({"username": current_user}, {"$set": {"last_seen": now_iso}})
+    return {"status": "online", "last_seen": now_iso}
 
 @app.post("/auth/change-password")
 async def change_password(data: PasswordChange, current_user: str = Depends(get_current_user)):
@@ -126,18 +136,16 @@ async def create_post(
 ):
     media_items = []
     for file in files:
-        # Support both Images and Videos
         res_type = "video" if file.content_type.startswith("video/") else "image"
         upload_res = cloudinary.uploader.upload(file.file, folder="insta_media", resource_type=res_type)
         media_items.append({"url": upload_res.get("secure_url"), "type": res_type})
 
-    # Extract #hashtags and @mentions from caption
     hashtags = re.findall(r"#(\w+)", caption)
     mentions = re.findall(r"@(\w+)", caption)
 
     new_post = {
         "username": current_user,
-        "media": media_items,  # Supports single image, carousel (multiple), or video/reel
+        "media": media_items,
         "caption": caption,
         "location": location,
         "hashtags": [h.lower() for h in hashtags],
@@ -146,13 +154,12 @@ async def create_post(
         "views": 0,
         "likes": [],
         "comments": [],
-        "created_at": datetime.utcnow().isoformat()
+        "created_at": datetime.utcnow().isoformat() + "Z"
     }
     result = await posts_collection.insert_one(new_post)
 
-    # Notify mentioned users
     for mentioned_user in mentions:
-        await create_notification(mentioned_user.lower(), current_user, "mention", f"mentioned you in a post.", str(result.inserted_id))
+        await create_notification(mentioned_user.lower(), current_user, "mention", "mentioned you in a post.", str(result.inserted_id))
 
     return {"message": "Post shared!", "post_id": str(result.inserted_id)}
 
@@ -169,13 +176,13 @@ async def get_feed(current_user: str = Depends(get_current_user)):
         if post["username"] in blocked or post_id_str in not_interested:
             continue
         author = await users_collection.find_one({"username": post["username"]})
-        # Respect Private Account privacy
         if author and author.get("is_private") and post["username"] != current_user:
             if current_user not in author.get("followers", []):
                 continue
 
         post["_id"] = post_id_str
         post["user_pic"] = author.get("profile_pic", "") if author else ""
+        post["author_last_seen"] = author.get("last_seen", "") if author else ""
         posts.append(post)
     return posts
 
@@ -219,7 +226,7 @@ async def add_comment(post_id: str, comment: CommentCreate, current_user: str = 
     if not post:
         raise HTTPException(status_code=404, detail="Post not found!")
 
-    new_comment = {"username": current_user, "text": comment.text, "created_at": datetime.utcnow().isoformat()}
+    new_comment = {"username": current_user, "text": comment.text, "created_at": datetime.utcnow().isoformat() + "Z"}
     await posts_collection.update_one({"_id": ObjectId(post_id)}, {"$push": {"comments": new_comment}})
     await create_notification(post["username"], current_user, "comment", f"commented: {comment.text}", post_id)
     return {"message": "Comment added!"}
@@ -247,12 +254,17 @@ async def search_all(q: str = "", current_user: str = Depends(get_current_user))
     blocked = me.get("blocked_users", [])
 
     users = []
-    u_query = {"username": {"$regex": q, "$options": "i"}, "username": {"$nin": blocked}} if q else {"username": {"$nin": blocked}}
-    async for u in users_collection.find(u_query, {"password": 0}).limit(20):
+    u_query = {"username": {"$regex": q, "$options": "i", "$nin": blocked}} if q else {"username": {"$nin": blocked}}
+    async for u in users_collection.find(u_query, {"password": 0}).limit(30):
         u["_id"] = str(u["_id"])
+        last_msg = await messages_collection.find_one(
+            {"$or": [{"sender": current_user, "receiver": u["username"]}, {"sender": u["username"], "receiver": current_user}]},
+            sort=[("_id", -1)]
+        )
+        u["last_msg_text"] = (last_msg.get("text") or "📷 Photo") if last_msg else ""
+        u["last_msg_time"] = last_msg.get("created_at", "") if last_msg else ""
         users.append(u)
 
-    # Also search posts by hashtag or caption
     matching_posts = []
     if q:
         clean_q = q.lstrip("#").lower()
@@ -321,24 +333,20 @@ async def follow_user(target_username: str, current_user: str = Depends(get_curr
     if not target:
         raise HTTPException(status_code=404, detail="User not found!")
 
-    # Unfollow if already following
     if current_user in target.get("followers", []):
         await users_collection.update_one({"username": target_username}, {"$pull": {"followers": current_user}})
         await users_collection.update_one({"username": current_user}, {"$pull": {"following": target_username}})
         return {"status": "unfollowed"}
 
-    # Cancel request if pending
     if current_user in target.get("follow_requests", []):
         await users_collection.update_one({"username": target_username}, {"$pull": {"follow_requests": current_user}})
         return {"status": "request_cancelled"}
 
-    # If private account, send follow request
     if target.get("is_private"):
         await users_collection.update_one({"username": target_username}, {"$push": {"follow_requests": current_user}})
         await create_notification(target_username, current_user, "follow_request", "requested to follow you.")
         return {"status": "requested"}
 
-    # Public account -> direct follow
     await users_collection.update_one({"username": target_username}, {"$push": {"followers": current_user}})
     await users_collection.update_one({"username": current_user}, {"$push": {"following": target_username}})
     await create_notification(target_username, current_user, "follow", "started following you.")
@@ -378,15 +386,15 @@ async def report_content(report: ReportCreate, current_user: str = Depends(get_c
         "target_type": report.target_type,
         "target_id": report.target_id,
         "reason": report.reason,
-        "created_at": datetime.utcnow().isoformat()
+        "created_at": datetime.utcnow().isoformat() + "Z"
     })
     return {"message": "Thank you. Your report has been submitted."}
-# --- MODULE 4: REELS (VERTICAL SHORT VIDEOS & VIEW COUNT) ---
+
+# --- MODULE 4: REELS ---
 
 @app.get("/reels")
 async def get_reels(current_user: str = Depends(get_current_user)):
     reels = []
-    # Fetch posts marked as reel or containing video media
     cursor = posts_collection.find({"$or": [{"is_reel": True}, {"media.type": "video"}]}).sort("_id", -1)
     async for r in cursor:
         r["_id"] = str(r["_id"])
@@ -401,7 +409,7 @@ async def increment_reel_view(reel_id: str):
         await posts_collection.update_one({"_id": ObjectId(reel_id)}, {"$inc": {"views": 1}})
     return {"status": "viewed"}
 
-# --- MODULE 5: INTERACTIVE STORIES (POLLS, VIEWERS, REPLIES & HIGHLIGHTS) ---
+# --- MODULE 5: STORIES ---
 
 @app.post("/stories", status_code=status.HTTP_201_CREATED)
 async def create_story(
@@ -448,8 +456,8 @@ async def get_active_stories(current_user: str = Depends(get_current_user)):
     stories = []
     async for s in stories_collection.find({"created_at": {"$gte": cutoff}}).sort("_id", -1):
         s["_id"] = str(s["_id"])
-        s["created_at"] = s["created_at"].isoformat()
-        s["expires_at"] = s["expires_at"].isoformat()
+        s["created_at"] = s["created_at"].isoformat() + "Z"
+        s["expires_at"] = s["expires_at"].isoformat() + "Z"
         stories.append(s)
     return stories
 
@@ -467,7 +475,6 @@ async def vote_story_poll(story_id: str, vote: PollVote, current_user: str = Dep
         raise HTTPException(status_code=404, detail="Poll not found!")
     
     poll = story["poll"]
-    # Remove previous vote if any, then add new vote
     for opt in poll["options"]:
         if current_user in opt["votes"]:
             opt["votes"].remove(current_user)
@@ -482,7 +489,6 @@ async def reply_to_story(story_id: str, reply: StoryReply, current_user: str = D
     if not story:
         raise HTTPException(status_code=404, detail="Story not found!")
     
-    # Send story reply directly as a DM message
     await messages_collection.insert_one({
         "sender": current_user,
         "receiver": story["username"],
@@ -491,7 +497,7 @@ async def reply_to_story(story_id: str, reply: StoryReply, current_user: str = D
         "reply_to_text": "",
         "reactions": [],
         "seen": False,
-        "created_at": datetime.utcnow().isoformat()
+        "created_at": datetime.utcnow().isoformat() + "Z"
     })
     await create_notification(story["username"], current_user, "story_reply", f"replied to your story: {reply.text}")
     return {"message": "Reply sent!"}
@@ -505,7 +511,7 @@ async def add_story_highlight(data: HighlightCreate, current_user: str = Depends
     await users_collection.update_one({"username": current_user}, {"$push": {"highlights": highlight}})
     return {"message": "Added to Highlights!"}
 
-# --- MODULE 7: ADVANCED DIRECT MESSAGING (REACTIONS, REPLY, DELETE, SEEN & MEDIA) ---
+# --- MODULE 7: DIRECT MESSAGING ---
 
 @app.post("/messages", status_code=status.HTTP_201_CREATED)
 async def send_dm(msg: MessageSend, current_user: str = Depends(get_current_user)):
@@ -517,7 +523,7 @@ async def send_dm(msg: MessageSend, current_user: str = Depends(get_current_user
         "reply_to_text": msg.reply_to_text,
         "reactions": [],
         "seen": False,
-        "created_at": datetime.utcnow().isoformat()
+        "created_at": datetime.utcnow().isoformat() + "Z"
     }
     res = await messages_collection.insert_one(new_msg)
     new_msg["_id"] = str(res.inserted_id)
@@ -532,7 +538,6 @@ async def upload_chat_media(file: UploadFile = File(...), current_user: str = De
 
 @app.get("/messages/{other_user}")
 async def get_conversation(other_user: str, current_user: str = Depends(get_current_user)):
-    # Mark incoming messages as Seen
     await messages_collection.update_many(
         {"sender": other_user, "receiver": current_user, "seen": False},
         {"$set": {"seen": True}}
@@ -564,6 +569,57 @@ async def delete_message(msg_id: str, current_user: str = Depends(get_current_us
         raise HTTPException(status_code=403, detail="Can only unsend your own messages!")
     await messages_collection.delete_one({"_id": ObjectId(msg_id)})
     return {"message": "Message unsent!"}
+
+# --- LIVE AUDIO / VIDEO CALLING (WEBRTC SIGNALING) ---
+
+@app.post("/calls/initiate")
+async def initiate_call(payload: dict = Body(...), current_user: str = Depends(get_current_user)):
+    callee = payload.get("callee")
+    call_type = payload.get("call_type", "video")
+    offer = payload.get("offer")
+    await calls_collection.delete_many({"$or": [{"caller": current_user}, {"callee": callee}]})
+    res = await calls_collection.insert_one({
+        "caller": current_user,
+        "callee": callee,
+        "call_type": call_type,
+        "offer": offer,
+        "answer": None,
+        "status": "ringing",
+        "created_at": datetime.utcnow().isoformat() + "Z"
+    })
+    return {"call_id": str(res.inserted_id)}
+
+@app.get("/calls/incoming")
+async def check_incoming_call(current_user: str = Depends(get_current_user)):
+    call = await calls_collection.find_one({"callee": current_user, "status": "ringing"}, sort=[("_id", -1)])
+    if not call:
+        return None
+    call["_id"] = str(call["_id"])
+    return call
+
+@app.post("/calls/{call_id}/answer")
+async def answer_call(call_id: str, payload: dict = Body(...), current_user: str = Depends(get_current_user)):
+    await calls_collection.update_one(
+        {"_id": ObjectId(call_id)},
+        {"$set": {"answer": payload.get("answer"), "status": "connected"}}
+    )
+    return {"status": "connected"}
+
+@app.get("/calls/{call_id}")
+async def get_call_status(call_id: str, current_user: str = Depends(get_current_user)):
+    if not ObjectId.is_valid(call_id):
+        return {"status": "ended"}
+    call = await calls_collection.find_one({"_id": ObjectId(call_id)})
+    if not call:
+        return {"status": "ended"}
+    call["_id"] = str(call["_id"])
+    return call
+
+@app.post("/calls/{call_id}/end")
+async def end_call(call_id: str, current_user: str = Depends(get_current_user)):
+    if ObjectId.is_valid(call_id):
+        await calls_collection.update_one({"_id": ObjectId(call_id)}, {"$set": {"status": "ended"}})
+    return {"status": "ended"}
 
 # --- MODULE 8: NOTIFICATIONS CENTER ---
 

@@ -114,6 +114,108 @@ body {
   border: 1.5px solid var(--bg-page);
 }
 
+/* --- ONLINE GREEN DOT & CALL UI --- */
+.avatar-status-wrap {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.online-green-dot {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #1ed760;
+  border: 2px solid var(--bg-page);
+}
+
+.ig-call-ring-card {
+  background: #181818;
+  color: #fff;
+  padding: 32px 24px;
+  border-radius: 16px;
+  text-align: center;
+  width: 90%;
+  max-width: 340px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+.call-btn-accept {
+  background: #1ed760;
+  color: #000;
+  border: none;
+  padding: 12px 24px;
+  border-radius: 24px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.call-btn-decline {
+  background: #ff3040;
+  color: #fff;
+  border: none;
+  padding: 12px 24px;
+  border-radius: 24px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ig-active-call-box {
+  position: relative;
+  width: 95%;
+  max-width: 440px;
+  height: 82vh;
+  background: #000;
+  border-radius: 16px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.remote-video-stream {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.local-video-pip {
+  position: absolute;
+  top: 70px;
+  right: 14px;
+  width: 110px;
+  height: 155px;
+  border-radius: 10px;
+  object-fit: cover;
+  border: 2px solid #fff;
+  z-index: 20;
+}
+
+.call-top-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 16px;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.75), transparent);
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.call-bottom-controls {
+  position: absolute;
+  bottom: 24px;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+}
+
 /* --- STORY PROGRESS BARS --- */
 .story-progress-row {
   display: flex;
