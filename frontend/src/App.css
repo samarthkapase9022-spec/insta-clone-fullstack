@@ -42,6 +42,99 @@ body {
   color: var(--text-main);
 }
 
+/* --- SERVER WAKE-UP & SKELETON LOADERS --- */
+.ig-wake-banner {
+  background: rgba(0, 149, 246, 0.12);
+  border: 1px solid rgba(0, 149, 246, 0.4);
+  color: var(--text-main);
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  margin-bottom: 12px;
+  text-align: center;
+}
+
+.ig-skeleton-card {
+  border: 1px solid var(--border-line);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 16px;
+}
+
+.ig-skeleton-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.ig-skeleton-circle {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--bg-input);
+  animation: pulseShimmer 1.3s infinite ease-in-out;
+}
+
+.ig-skeleton-line {
+  height: 12px;
+  border-radius: 6px;
+  background: var(--bg-input);
+  animation: pulseShimmer 1.3s infinite ease-in-out;
+}
+
+.ig-skeleton-box {
+  width: 100%;
+  height: 280px;
+  border-radius: 6px;
+  background: var(--bg-input);
+  animation: pulseShimmer 1.3s infinite ease-in-out;
+}
+
+@keyframes pulseShimmer {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 0.95; }
+}
+
+/* --- RED UNREAD BADGE --- */
+.icon-badge-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.ig-red-dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #ff3040;
+  border: 1.5px solid var(--bg-page);
+}
+
+/* --- STORY PROGRESS BARS --- */
+.story-progress-row {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+}
+
+.story-progress-track {
+  flex: 1;
+  height: 2.5px;
+  background: rgba(255, 255, 255, 0.35);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.story-progress-fill {
+  height: 100%;
+  background: #ffffff;
+  transition: width 0.1s linear;
+}
+
 /* --- LEFT SIDEBAR (DESKTOP) --- */
 .ig-sidebar {
   width: 244px;

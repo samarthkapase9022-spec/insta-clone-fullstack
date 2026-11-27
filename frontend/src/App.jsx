@@ -82,9 +82,14 @@ function App() {
   const [activeTab, setActiveTab] = useState("home");
   const [viewedUsername, setViewedUsername] = useState("");
 
+  // Auth & Server Wake-Up State
   const [isSignup, setIsSignup] = useState(false);
   const [authForm, setAuthForm] = useState({ username: "", email: "", password: "", full_name: "" });
+  const [authLoading, setAuthLoading] = useState(false);
+  const [feedLoading, setFeedLoading] = useState(false);
+  const [serverWaking, setServerWaking] = useState(false);
 
+  // Feed
   const [posts, setPosts] = useState([]);
   const [carouselIdx, setCarouselIdx] = useState({});
   const [openMenuPostId, setOpenMenuPostId] = useState(null);
@@ -94,21 +99,26 @@ function App() {
   const [selectedPostModal, setSelectedPostModal] = useState(null);
   const lastTapRef = useRef(0);
 
+  // Reels
   const [reels, setReels] = useState([]);
 
+  // Stories & Auto-Progress Viewer
   const [stories, setStories] = useState([]);
-  const [activeStory, setActiveStory] = useState(null);
+  const [activeStoryIndex, setActiveStoryIndex] = useState(null);
+  const [storyProgress, setStoryProgress] = useState(0);
   const [showStoryCreator, setShowStoryCreator] = useState(false);
   const [storyForm, setStoryForm] = useState({ caption: "", music_name: "", poll_question: "", poll_opt1: "Yes", poll_opt2: "No", close_friends_only: false, file: null });
   const [storyReplyText, setStoryReplyText] = useState("");
   const [highlightTitle, setHighlightTitle] = useState("");
 
+  // Create Post
   const [postFiles, setPostFiles] = useState([]);
   const [caption, setCaption] = useState("");
   const [location, setLocation] = useState("");
   const [isReelUpload, setIsReelUpload] = useState(false);
   const [uploading, setUploading] = useState(false);
 
+  // Search, Users & Profile
   const [allUsers, setAllUsers] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState({ users: [], posts: [] });
@@ -118,41 +128,85 @@ function App() {
   const [editForm, setEditForm] = useState({ full_name: "", bio: "", is_private: false });
   const [listModal, setListModal] = useState(null);
 
+  // Direct Messages & Badges
   const [selectedChatUser, setSelectedChatUser] = useState(null);
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
   const [replyToMsg, setReplyToMsg] = useState("");
+  const [unreadNotifCount, setUnreadNotifCount] = useState(0);
+  const [hasUnreadDM, setHasUnreadDM] = useState(false);
 
+  // Notifications & Settings
   const [notifications, setNotifications] = useState([]);
   const [passForm, setPassForm] = useState({ old_password: "", new_password: "" });
 
   const authHeaders = { Authorization: `Bearer ${token}` };
+  const activeStory = activeStoryIndex !== null ? stories[activeStoryIndex] : null;
 
   useEffect(() => {
     if (token) {
-      fetchFeed();
+      fetchFeed(true);
       fetchStories();
       fetchAllUsers();
+      fetchNotifications(true);
     }
   }, [token]);
 
+  // Auto-advance 5s Story Progress Timer
   useEffect(() => {
-    if (activeTab === "messages" && selectedChatUser) {
-      fetchMessages(selectedChatUser.username);
-      const timer = setInterval(() => fetchMessages(selectedChatUser.username), 3000);
-      return () => clearInterval(timer);
-    }
-  }, [activeTab, selectedChatUser]);
+    if (activeStoryIndex === null || !activeStory) return;
+    setStoryProgress(0);
+    const interval = setInterval(() => {
+      setStoryProgress((prev) => {
+        if (prev >= 100) {
+          if (activeStoryIndex < stories.length - 1) {
+            const nextIdx = activeStoryIndex + 1;
+            setActiveStoryIndex(nextIdx);
+            fetch(`${API_URL}/stories/${stories[nextIdx]._id}/view`, { method: "POST", headers: authHeaders });
+            return 0;
+          } else {
+            setActiveStoryIndex(null);
+            return 0;
+          }
+        }
+        return prev + 2; // 50 steps * 100ms = 5 seconds
+      });
+    }, 100);
+    return () => clearInterval(interval);
+  }, [activeStoryIndex, stories.length]);
 
-  const fetchFeed = async () => {
-    const res = await fetch(`${API_URL}/posts`, { headers: authHeaders });
-    if (res.ok) {
-      const data = await res.json();
-      setPosts(data);
-      if (selectedPostModal) {
-        const updated = data.find((p) => p._id === selectedPostModal._id);
-        if (updated) setSelectedPostModal(updated);
+  // Poll DM & Notifications silently every 8s
+  useEffect(() => {
+    if (!token) return;
+    const bgTimer = setInterval(() => {
+      fetchNotifications(true);
+      if (activeTab === "messages" && selectedChatUser) {
+        fetchMessages(selectedChatUser.username);
       }
+    }, 8000);
+    return () => clearInterval(bgTimer);
+  }, [token, activeTab, selectedChatUser]);
+
+  const fetchFeed = async (isInitial = false) => {
+    if (isInitial) setFeedLoading(true);
+    const wakeTimer = setTimeout(() => {
+      if (isInitial) setServerWaking(true);
+    }, 3500);
+
+    try {
+      const res = await fetch(`${API_URL}/posts`, { headers: authHeaders });
+      if (res.ok) {
+        const data = await res.json();
+        setPosts(data);
+        if (selectedPostModal) {
+          const updated = data.find((p) => p._id === selectedPostModal._id);
+          if (updated) setSelectedPostModal(updated);
+        }
+      }
+    } finally {
+      clearTimeout(wakeTimer);
+      setFeedLoading(false);
+      setServerWaking(false);
     }
   };
 
@@ -174,9 +228,23 @@ function App() {
     }
   };
 
-  const fetchNotifications = async () => {
+  const fetchNotifications = async (silent = false) => {
     const res = await fetch(`${API_URL}/notifications`, { headers: authHeaders });
-    if (res.ok) setNotifications(await res.json());
+    if (res.ok) {
+      const data = await res.json();
+      setNotifications(data);
+      const seenCount = Number(localStorage.getItem("seenNotifs") || 0);
+      if (!silent) {
+        localStorage.setItem("seenNotifs", String(data.length));
+        setUnreadNotifCount(0);
+      } else if (data.length > seenCount) {
+        setUnreadNotifCount(data.length - seenCount);
+        const latest = data[0];
+        if (latest && latest.text?.includes("message")) {
+          setHasUnreadDM(true);
+        }
+      }
+    }
   };
 
   const openProfile = async (targetUsername) => {
@@ -202,6 +270,8 @@ function App() {
 
   const handleAuth = async (e) => {
     e.preventDefault();
+    setAuthLoading(true);
+    const wakeTimer = setTimeout(() => setServerWaking(true), 3000);
     try {
       if (isSignup) {
         const res = await fetch(`${API_URL}/signup`, {
@@ -227,6 +297,10 @@ function App() {
       }
     } catch (err) {
       alert(err.message);
+    } finally {
+      clearTimeout(wakeTimer);
+      setAuthLoading(false);
+      setServerWaking(false);
     }
   };
 
@@ -279,7 +353,6 @@ function App() {
     if (!post.likes?.includes(currentUser)) handleLike(post._id);
   };
 
-  // Touch support for Mobile Double-Tap
   const handleTouchTap = (post) => {
     const now = Date.now();
     if (now - lastTapRef.current < 300) {
@@ -360,9 +433,23 @@ function App() {
     }
   };
 
-  const openStoryViewer = async (story) => {
-    setActiveStory(story);
-    await fetch(`${API_URL}/stories/${story._id}/view`, { method: "POST", headers: authHeaders });
+  const openStoryViewer = async (index) => {
+    setActiveStoryIndex(index);
+    const target = stories[index];
+    if (target) {
+      await fetch(`${API_URL}/stories/${target._id}/view`, { method: "POST", headers: authHeaders });
+    }
+  };
+
+  const handleStoryTapNavigation = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    if (clickX < rect.width * 0.35) {
+      if (activeStoryIndex > 0) openStoryViewer(activeStoryIndex - 1);
+    } else {
+      if (activeStoryIndex < stories.length - 1) openStoryViewer(activeStoryIndex + 1);
+      else setActiveStoryIndex(null);
+    }
   };
 
   const handleVotePoll = async (storyId, optionIndex) => {
@@ -373,8 +460,9 @@ function App() {
     });
     if (res.ok) {
       const data = await res.json();
-      setActiveStory({ ...activeStory, poll: data.poll });
-      fetchStories();
+      const updatedStories = [...stories];
+      updatedStories[activeStoryIndex] = { ...activeStory, poll: data.poll };
+      setStories(updatedStories);
     }
   };
 
@@ -532,10 +620,16 @@ function App() {
     });
   };
 
+  // --- AUTH SCREEN ---
   if (!token) {
     return (
       <div className="ig-auth-box">
-        <div className="ig-wordmark" style={{ fontSize: "44px", display: "block" }}>Instagram</div>
+        <div className="ig-wordmark" style={{ fontSize: "44px", display: "block" }}>Pixagram</div>
+        {serverWaking && (
+          <div className="ig-wake-banner">
+            ⏳ Waking up free cloud server (takes ~30s on first open)...
+          </div>
+        )}
         <form onSubmit={handleAuth}>
           {isSignup && (
             <>
@@ -545,8 +639,8 @@ function App() {
           )}
           <input className="ig-input" type="email" placeholder="Email" required onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })} />
           <input className="ig-input" type="password" placeholder="Password" required onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })} />
-          <button type="submit" className="ig-btn-blue" style={{ width: "100%", marginTop: "12px", padding: "10px" }}>
-            {isSignup ? "Sign up" : "Log in"}
+          <button type="submit" className="ig-btn-blue" style={{ width: "100%", marginTop: "12px", padding: "10px" }} disabled={authLoading}>
+            {authLoading ? "Connecting..." : isSignup ? "Sign up" : "Log in"}
           </button>
         </form>
         {!isSignup && (
@@ -571,16 +665,18 @@ function App() {
     <div className={`ig-shell ${darkMode ? "dark-mode" : ""}`}>
       {/* MOBILE TOP HEADER */}
       <header className="ig-mobile-header">
-        <div className="ig-mobile-logo" onClick={() => { setActiveTab("home"); fetchFeed(); }}>Instagram</div>
+        <div className="ig-mobile-logo" onClick={() => { setActiveTab("home"); fetchFeed(); }}>Pixagram</div>
         <div className="ig-mobile-top-actions">
           <button className="ig-svg-btn" onClick={() => setDarkMode(!darkMode)} title="Theme">
             <span style={{ fontSize: "18px" }}>{darkMode ? "☀️" : "🌙"}</span>
           </button>
-          <button className="ig-svg-btn" onClick={() => { setActiveTab("notifications"); fetchNotifications(); fetchAllUsers(); }}>
+          <button className="ig-svg-btn icon-badge-wrap" onClick={() => { setActiveTab("notifications"); fetchNotifications(false); fetchAllUsers(); }}>
             <Icons.Bell active={activeTab === "notifications"} />
+            {unreadNotifCount > 0 && <span className="ig-red-dot" />}
           </button>
-          <button className="ig-svg-btn" onClick={() => { setActiveTab("messages"); fetchAllUsers(); }}>
+          <button className="ig-svg-btn icon-badge-wrap" onClick={() => { setActiveTab("messages"); setHasUnreadDM(false); fetchAllUsers(); }}>
             <Icons.Messenger active={activeTab === "messages"} />
+            {hasUnreadDM && <span className="ig-red-dot" />}
           </button>
         </div>
       </header>
@@ -588,7 +684,7 @@ function App() {
       {/* DESKTOP LEFT SIDEBAR */}
       <aside className="ig-sidebar">
         <div>
-          <div className="ig-wordmark" onClick={() => setActiveTab("home")}>Instagram</div>
+          <div className="ig-wordmark" onClick={() => setActiveTab("home")}>Pixagram</div>
           <nav className="ig-nav-list">
             <button className={`ig-nav-btn ${activeTab === "home" ? "active" : ""}`} onClick={() => { setActiveTab("home"); fetchFeed(); }}>
               <Icons.Home active={activeTab === "home"} /> <span className="ig-nav-text">Home</span>
@@ -602,11 +698,19 @@ function App() {
             <button className={`ig-nav-btn ${activeTab === "reels" ? "active" : ""}`} onClick={() => { setActiveTab("reels"); fetchReels(); }}>
               <Icons.Reels active={activeTab === "reels"} /> <span className="ig-nav-text">Reels</span>
             </button>
-            <button className={`ig-nav-btn ${activeTab === "messages" ? "active" : ""}`} onClick={() => { setActiveTab("messages"); fetchAllUsers(); }}>
-              <Icons.Messenger active={activeTab === "messages"} /> <span className="ig-nav-text">Messages</span>
+            <button className={`ig-nav-btn ${activeTab === "messages" ? "active" : ""}`} onClick={() => { setActiveTab("messages"); setHasUnreadDM(false); fetchAllUsers(); }}>
+              <span className="icon-badge-wrap">
+                <Icons.Messenger active={activeTab === "messages"} />
+                {hasUnreadDM && <span className="ig-red-dot" />}
+              </span>
+              <span className="ig-nav-text">Messages</span>
             </button>
-            <button className={`ig-nav-btn ${activeTab === "notifications" ? "active" : ""}`} onClick={() => { setActiveTab("notifications"); fetchNotifications(); fetchAllUsers(); }}>
-              <Icons.Bell active={activeTab === "notifications"} /> <span className="ig-nav-text">Notifications</span>
+            <button className={`ig-nav-btn ${activeTab === "notifications" ? "active" : ""}`} onClick={() => { setActiveTab("notifications"); fetchNotifications(false); fetchAllUsers(); }}>
+              <span className="icon-badge-wrap">
+                <Icons.Bell active={activeTab === "notifications"} />
+                {unreadNotifCount > 0 && <span className="ig-red-dot" />}
+              </span>
+              <span className="ig-nav-text">Notifications</span>
             </button>
             <button className={`ig-nav-btn ${activeTab === "create" ? "active" : ""}`} onClick={() => setActiveTab("create")}>
               <Icons.Create /> <span className="ig-nav-text">Create</span>
@@ -631,7 +735,7 @@ function App() {
         </div>
       </aside>
 
-      {/* MOBILE BOTTOM NAVIGATION BAR (5 PRIMARY ICONS) */}
+      {/* MOBILE BOTTOM NAVIGATION BAR */}
       <nav className="ig-mobile-bottom-nav">
         <button className="ig-svg-btn" onClick={() => { setActiveTab("home"); fetchFeed(); }}>
           <Icons.Home active={activeTab === "home"} />
@@ -658,14 +762,20 @@ function App() {
         {activeTab === "home" && (
           <div className="ig-home-grid">
             <div className="ig-feed-column">
+              {serverWaking && (
+                <div className="ig-wake-banner" style={{ margin: "8px 12px" }}>
+                  ⏳ Waking up server... Your feed will appear in a few seconds.
+                </div>
+              )}
+
               {/* Stories Carousel */}
               <div className="ig-stories">
                 <div className="ig-story-unit" onClick={() => setShowStoryCreator(true)}>
                   <div className="ig-gradient-ring plain"><div className="ig-story-img">+</div></div>
                   <span className="ig-story-name">Your story</span>
                 </div>
-                {stories.map((st) => (
-                  <div key={st._id} className="ig-story-unit" onClick={() => openStoryViewer(st)}>
+                {stories.map((st, index) => (
+                  <div key={st._id} className="ig-story-unit" onClick={() => openStoryViewer(index)}>
                     <div className={`ig-gradient-ring ${st.close_friends_only ? "cf" : ""}`}>
                       {st.media_type === "video" ? (
                         <div className="ig-story-img">🎬</div>
@@ -678,124 +788,136 @@ function App() {
                 ))}
               </div>
 
-              {/* Feed Posts */}
-              {posts.map((post) => {
-                const mediaList = post.media || [{ url: post.image_url, type: "image" }];
-                const currentSlide = carouselIdx[post._id] || 0;
-                const activeMedia = mediaList[currentSlide] || mediaList[0];
-                const isLiked = post.likes?.includes(currentUser);
-                const isSaved = meObj?.saved_posts?.includes(post._id);
-
-                return (
-                  <article key={post._id} className="ig-post">
-                    <div className="ig-post-top">
-                      <div style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" }} onClick={() => openProfile(post.username)}>
-                        {post.user_pic ? (
-                          <img src={post.user_pic} alt={post.username} className="ig-avatar-32" />
-                        ) : (
-                          <div className="ig-avatar-32">{post.username[0]}</div>
-                        )}
-                        <div>
-                          <div style={{ fontWeight: "600", fontSize: "14px", display: "flex", alignItems: "center", gap: "4px" }}>
-                            {post.username} <Icons.Verified />
-                          </div>
-                          {post.location && <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>{post.location}</div>}
-                        </div>
+              {/* Skeleton Loader while initial feed fetches */}
+              {feedLoading && posts.length === 0 ? (
+                <div style={{ padding: "12px" }}>
+                  {[1, 2].map((n) => (
+                    <div key={n} className="ig-skeleton-card">
+                      <div className="ig-skeleton-header">
+                        <div className="ig-skeleton-circle" />
+                        <div className="ig-skeleton-line" style={{ width: "120px" }} />
                       </div>
+                      <div className="ig-skeleton-box" />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                posts.map((post) => {
+                  const mediaList = post.media || [{ url: post.image_url, type: "image" }];
+                  const currentSlide = carouselIdx[post._id] || 0;
+                  const activeMedia = mediaList[currentSlide] || mediaList[0];
+                  const isLiked = post.likes?.includes(currentUser);
+                  const isSaved = meObj?.saved_posts?.includes(post._id);
 
-                      <button style={{ background: "none", border: "none", color: "var(--text-main)", cursor: "pointer", fontWeight: "bold", padding: "4px 8px" }} onClick={() => setOpenMenuPostId(openMenuPostId === post._id ? null : post._id)}>
-                        •••
-                      </button>
-
-                      {openMenuPostId === post._id && (
-                        <div className="ig-dropdown">
-                          {post.username === currentUser ? (
-                            <>
-                              <button onClick={() => { setEditingPost(post); setOpenMenuPostId(null); }}>Edit Post</button>
-                              <button style={{ color: "#ff3040" }} onClick={() => handleDeletePost(post._id)}>Delete Post</button>
-                            </>
+                  return (
+                    <article key={post._id} className="ig-post">
+                      <div className="ig-post-top">
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" }} onClick={() => openProfile(post.username)}>
+                          {post.user_pic ? (
+                            <img src={post.user_pic} alt={post.username} className="ig-avatar-32" />
                           ) : (
-                            <>
-                              <button onClick={() => handleNotInterested(post._id)}>Not Interested</button>
-                              <button style={{ color: "#ff3040" }} onClick={() => handleReport("post", post._id)}>Report Post</button>
-                            </>
+                            <div className="ig-avatar-32">{post.username[0]}</div>
                           )}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Carousel / Video Media */}
-                    <div className="ig-media-box" onDoubleClick={() => handleDoubleTap(post)} onTouchEnd={() => handleTouchTap(post)}>
-                      {activeMedia?.type === "video" ? (
-                        <video src={activeMedia.url} controls playsInline />
-                      ) : (
-                        <img src={activeMedia?.url} alt="Post" />
-                      )}
-
-                      {mediaList.length > 1 && (
-                        <>
-                          {currentSlide > 0 && (
-                            <button className="carousel-btn left" onClick={() => setCarouselIdx({ ...carouselIdx, [post._id]: currentSlide - 1 })}>‹</button>
-                          )}
-                          {currentSlide < mediaList.length - 1 && (
-                            <button className="carousel-btn right" onClick={() => setCarouselIdx({ ...carouselIdx, [post._id]: currentSlide + 1 })}>›</button>
-                          )}
-                          <div style={{ position: "absolute", bottom: "10px", background: "rgba(0,0,0,0.6)", color: "#fff", padding: "2px 8px", borderRadius: "10px", fontSize: "11px" }}>
-                            {currentSlide + 1}/{mediaList.length}
+                          <div>
+                            <div style={{ fontWeight: "600", fontSize: "14px", display: "flex", alignItems: "center", gap: "4px" }}>
+                              {post.username} <Icons.Verified />
+                            </div>
+                            {post.location && <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>{post.location}</div>}
                           </div>
-                        </>
-                      )}
-
-                      {heartBurstId === post._id && (
-                        <div className="ig-heart-burst">
-                          <svg width="85" height="85" viewBox="0 0 24 24" fill="#fff">
-                            <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
-                          </svg>
                         </div>
-                      )}
-                    </div>
 
-                    <div className="ig-post-body">
-                      {/* Action Icons */}
-                      <div className="ig-action-bar">
-                        <div className="ig-action-left">
-                          <button className="ig-svg-btn" onClick={() => handleLike(post._id)}><Icons.Heart liked={isLiked} /></button>
-                          <button className="ig-svg-btn" onClick={() => setSelectedPostModal(post)}><Icons.Comment /></button>
-                          <button className="ig-svg-btn" onClick={() => { navigator.clipboard.writeText(activeMedia?.url); alert("Post link copied!"); }}>
-                            <Icons.Messenger active={false} />
-                          </button>
-                        </div>
-                        <button className="ig-svg-btn" onClick={() => handleSavePost(post._id)}><Icons.Bookmark saved={isSaved} /></button>
+                        <button style={{ background: "none", border: "none", color: "var(--text-main)", cursor: "pointer", fontWeight: "bold", padding: "4px 8px" }} onClick={() => setOpenMenuPostId(openMenuPostId === post._id ? null : post._id)}>
+                          •••
+                        </button>
+
+                        {openMenuPostId === post._id && (
+                          <div className="ig-dropdown">
+                            {post.username === currentUser ? (
+                              <>
+                                <button onClick={() => { setEditingPost(post); setOpenMenuPostId(null); }}>Edit Post</button>
+                                <button style={{ color: "#ff3040" }} onClick={() => handleDeletePost(post._id)}>Delete Post</button>
+                              </>
+                            ) : (
+                              <>
+                                <button onClick={() => handleNotInterested(post._id)}>Not Interested</button>
+                                <button style={{ color: "#ff3040" }} onClick={() => handleReport("post", post._id)}>Report Post</button>
+                              </>
+                            )}
+                          </div>
+                        )}
                       </div>
 
-                      <div style={{ fontWeight: "600", fontSize: "14px", marginBottom: "6px" }}>{post.likes?.length || 0} likes</div>
+                      <div className="ig-media-box" onDoubleClick={() => handleDoubleTap(post)} onTouchEnd={() => handleTouchTap(post)}>
+                        {activeMedia?.type === "video" ? (
+                          <video src={activeMedia.url} controls playsInline />
+                        ) : (
+                          <img src={activeMedia?.url} alt="Post" />
+                        )}
 
-                      {post.caption && (
-                        <div style={{ fontSize: "14px", marginBottom: "6px" }}>
-                          <strong style={{ cursor: "pointer" }} onClick={() => openProfile(post.username)}>{post.username}</strong>{" "}
-                          {renderFormattedCaption(post.caption)}
+                        {mediaList.length > 1 && (
+                          <>
+                            {currentSlide > 0 && (
+                              <button className="carousel-btn left" onClick={() => setCarouselIdx({ ...carouselIdx, [post._id]: currentSlide - 1 })}>‹</button>
+                            )}
+                            {currentSlide < mediaList.length - 1 && (
+                              <button className="carousel-btn right" onClick={() => setCarouselIdx({ ...carouselIdx, [post._id]: currentSlide + 1 })}>›</button>
+                            )}
+                            <div style={{ position: "absolute", bottom: "10px", background: "rgba(0,0,0,0.6)", color: "#fff", padding: "2px 8px", borderRadius: "10px", fontSize: "11px" }}>
+                              {currentSlide + 1}/{mediaList.length}
+                            </div>
+                          </>
+                        )}
+
+                        {heartBurstId === post._id && (
+                          <div className="ig-heart-burst">
+                            <svg width="85" height="85" viewBox="0 0 24 24" fill="#fff">
+                              <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+                            </svg>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="ig-post-body">
+                        <div className="ig-action-bar">
+                          <div className="ig-action-left">
+                            <button className="ig-svg-btn" onClick={() => handleLike(post._id)}><Icons.Heart liked={isLiked} /></button>
+                            <button className="ig-svg-btn" onClick={() => setSelectedPostModal(post)}><Icons.Comment /></button>
+                            <button className="ig-svg-btn" onClick={() => { navigator.clipboard.writeText(activeMedia?.url); alert("Post link copied!"); }}>
+                              <Icons.Messenger active={false} />
+                            </button>
+                          </div>
+                          <button className="ig-svg-btn" onClick={() => handleSavePost(post._id)}><Icons.Bookmark saved={isSaved} /></button>
                         </div>
-                      )}
 
-                      {post.comments?.slice(-2).map((c, i) => (
-                        <div key={i} style={{ fontSize: "13px", marginBottom: "3px" }}>
-                          <strong>{c.username}</strong> {c.text}
-                        </div>
-                      ))}
+                        <div style={{ fontWeight: "600", fontSize: "14px", marginBottom: "6px" }}>{post.likes?.length || 0} likes</div>
 
-                      <form style={{ display: "flex", marginTop: "8px" }} onSubmit={(e) => handleComment(e, post._id)}>
-                        <input
-                          style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--text-main)", fontSize: "14px" }}
-                          placeholder="Add a comment..."
-                          value={commentText[post._id] || ""}
-                          onChange={(e) => setCommentText({ ...commentText, [post._id]: e.target.value })}
-                        />
-                        {commentText[post._id]?.trim() && <button type="submit" className="ig-link-btn">Post</button>}
-                      </form>
-                    </div>
-                  </article>
-                );
-              })}
+                        {post.caption && (
+                          <div style={{ fontSize: "14px", marginBottom: "6px" }}>
+                            <strong style={{ cursor: "pointer" }} onClick={() => openProfile(post.username)}>{post.username}</strong>{" "}
+                            {renderFormattedCaption(post.caption)}
+                          </div>
+                        )}
+
+                        {post.comments?.slice(-2).map((c, i) => (
+                          <div key={i} style={{ fontSize: "13px", marginBottom: "3px" }}>
+                            <strong>{c.username}</strong> {c.text}
+                          </div>
+                        ))}
+
+                        <form style={{ display: "flex", marginTop: "8px" }} onSubmit={(e) => handleComment(e, post._id)}>
+                          <input
+                            style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: "var(--text-main)", fontSize: "14px" }}
+                            placeholder="Add a comment..."
+                            value={commentText[post._id] || ""}
+                            onChange={(e) => setCommentText({ ...commentText, [post._id]: e.target.value })}
+                          />
+                          {commentText[post._id]?.trim() && <button type="submit" className="ig-link-btn">Post</button>}
+                        </form>
+                      </div>
+                    </article>
+                  );
+                })
+              )}
             </div>
 
             {/* Right Suggestions Panel */}
@@ -1022,14 +1144,18 @@ function App() {
               </div>
             )}
 
-            {notifications.map((n) => (
-              <div key={n._id} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "10px 0", borderBottom: "1px solid var(--border-line)" }}>
-                <div className="ig-avatar-32">{n.actor[0]}</div>
-                <div style={{ fontSize: "14px" }}>
-                  <strong style={{ cursor: "pointer" }} onClick={() => openProfile(n.actor)}>{n.actor}</strong> {n.text}
+            {notifications.length === 0 ? (
+              <p style={{ color: "var(--text-muted)", fontSize: "14px" }}>No notifications yet.</p>
+            ) : (
+              notifications.map((n) => (
+                <div key={n._id} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "10px 0", borderBottom: "1px solid var(--border-line)" }}>
+                  <div className="ig-avatar-32">{n.actor[0]}</div>
+                  <div style={{ fontSize: "14px" }}>
+                    <strong style={{ cursor: "pointer" }} onClick={() => openProfile(n.actor)}>{n.actor}</strong> {n.text}
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         )}
 
@@ -1234,20 +1360,35 @@ function App() {
         </div>
       )}
 
+      {/* AUTO-PLAY STORY VIEWER WITH PROGRESS BARS */}
       {activeStory && (
-        <div className="ig-backdrop" onClick={() => setActiveStory(null)}>
+        <div className="ig-backdrop" onClick={() => setActiveStoryIndex(null)}>
           <div style={{ width: "94%", maxWidth: "360px", height: "84vh", background: "#000", borderRadius: "12px", position: "relative", overflow: "hidden", display: "flex", flexDirection: "column" }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ position: "absolute", top: 0, left: 0, right: 0, padding: "14px", background: "linear-gradient(to bottom, rgba(0,0,0,0.8), transparent)", color: "#fff", zIndex: 10 }}>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <div style={{ position: "absolute", top: 0, left: 0, right: 0, padding: "10px 14px", background: "linear-gradient(to bottom, rgba(0,0,0,0.85), transparent)", color: "#fff", zIndex: 10 }}>
+              {/* Segmented Progress Bars */}
+              <div className="story-progress-row">
+                {stories.map((_, i) => (
+                  <div key={i} className="story-progress-track">
+                    <div
+                      className="story-progress-fill"
+                      style={{
+                        width: i < activeStoryIndex ? "100%" : i === activeStoryIndex ? `${storyProgress}%` : "0%",
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "8px" }}>
                 <strong>@{activeStory.username} {activeStory.close_friends_only && "💚"}</strong>
-                <button onClick={() => setActiveStory(null)} style={{ background: "none", border: "none", color: "#fff", fontSize: "18px", cursor: "pointer" }}>✕</button>
+                <button onClick={() => setActiveStoryIndex(null)} style={{ background: "none", border: "none", color: "#fff", fontSize: "18px", cursor: "pointer" }}>✕</button>
               </div>
               {activeStory.music_name && <div style={{ fontSize: "12px", marginTop: "4px" }}>🎵 {activeStory.music_name}</div>}
             </div>
 
-            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
+            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", position: "relative", cursor: "pointer" }} onClick={handleStoryTapNavigation}>
               {activeStory.media_type === "video" ? (
-                <video src={activeStory.media_url} autoPlay controls style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                <video src={activeStory.media_url} autoPlay playsInline style={{ width: "100%", height: "100%", objectFit: "contain" }} />
               ) : (
                 <img src={activeStory.media_url} alt="Story" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
               )}
@@ -1259,7 +1400,7 @@ function App() {
               )}
 
               {activeStory.poll && (
-                <div style={{ position: "absolute", bottom: "50px", background: "#fff", color: "#000", padding: "12px", borderRadius: "12px", width: "82%", textAlign: "center" }}>
+                <div style={{ position: "absolute", bottom: "50px", background: "#fff", color: "#000", padding: "12px", borderRadius: "12px", width: "82%", textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
                   <div style={{ fontWeight: "700", marginBottom: "8px", fontSize: "14px" }}>{activeStory.poll.question}</div>
                   {activeStory.poll.options.map((opt, idx) => (
                     <button key={idx} style={{ width: "100%", padding: "8px", margin: "4px 0", borderRadius: "6px", border: "1px solid #ddd", cursor: "pointer", fontWeight: "600" }} onClick={() => handleVotePoll(activeStory._id, idx)}>
