@@ -41,8 +41,9 @@ class HighlightCreate(BaseModel):
 class MessageSend(BaseModel):
     receiver: str
     text: str = ""
-    media_url: str = ""
-    reply_to_text: str = ""
+    media_url: Optional[str] = None
+    reply_to_text: Optional[str] = None
+    shared_post: Optional[dict] = None
 
 class MessageReaction(BaseModel):
     emoji: str

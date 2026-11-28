@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException, status, UploadFile, File, Form, Depends, Request, Body
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List
+from typing import List, Optional
 from bson import ObjectId
 import cloudinary
 import cloudinary.uploader
@@ -39,6 +39,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Helper to normalize post media fields for frontend compatibility
+def format_post_doc(post: dict) -> dict:
+    post["_id"] = str(post["_id"])
+    media_list = post.get("media", [])
+    if media_list and isinstance(media_list, list):
+        post.setdefault("media_url", media_list[0].get("url", ""))
+        post.setdefault("media_type", media_list[0].get("type", "image"))
+    return post
+
 # Helper to create notifications automatically
 async def create_notification(recipient: str, actor: str, notif_type: str, text: str, post_id: str = ""):
     if recipient == actor:
@@ -57,15 +66,18 @@ async def create_notification(recipient: str, actor: str, notif_type: str, text:
 
 @app.post("/signup", status_code=status.HTTP_201_CREATED)
 async def signup(user: UserSignup):
-    if await users_collection.find_one({"email": user.email}):
+    clean_email = user.email.strip().lower()
+    clean_username = user.username.strip().lower()
+
+    if await users_collection.find_one({"email": {"$regex": f"^{re.escape(clean_email)}$", "$options": "i"}}):
         raise HTTPException(status_code=400, detail="Email already registered!")
-    if await users_collection.find_one({"username": user.username.lower()}):
+    if await users_collection.find_one({"username": {"$regex": f"^{re.escape(clean_username)}$", "$options": "i"}}):
         raise HTTPException(status_code=400, detail="Username already taken!")
 
     new_user = {
-        "username": user.username.lower(),
-        "email": user.email,
-        "full_name": user.full_name,
+        "username": clean_username,
+        "email": clean_email,
+        "full_name": user.full_name.strip(),
         "bio": "",
         "password": hash_password(user.password),
         "profile_pic": "",
@@ -86,7 +98,8 @@ async def signup(user: UserSignup):
 
 @app.post("/login")
 async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
-    db_user = await users_collection.find_one({"email": form_data.username})
+    clean_email = form_data.username.strip().lower()
+    db_user = await users_collection.find_one({"email": {"$regex": f"^{re.escape(clean_email)}$", "$options": "i"}})
     if not db_user or not verify_password(form_data.password, db_user["password"]):
         raise HTTPException(status_code=401, detail="Invalid email or password!")
 
@@ -104,8 +117,9 @@ async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends
         }
     )
 
-    token = create_access_token({"sub": db_user["email"], "username": db_user["username"]})
-    return {"access_token": token, "token_type": "bearer", "username": db_user["username"]}
+    clean_uname = db_user["username"].strip().lower()
+    token = create_access_token({"sub": db_user["email"], "username": clean_uname})
+    return {"access_token": token, "token_type": "bearer", "username": clean_uname}
 
 @app.post("/users/ping")
 async def ping_active_status(current_user: str = Depends(get_current_user)):
@@ -146,6 +160,8 @@ async def create_post(
     new_post = {
         "username": current_user,
         "media": media_items,
+        "media_url": media_items[0]["url"] if media_items else "",
+        "media_type": media_items[0]["type"] if media_items else "image",
         "caption": caption,
         "location": location,
         "hashtags": [h.lower() for h in hashtags],
@@ -166,8 +182,8 @@ async def create_post(
 @app.get("/posts")
 async def get_feed(current_user: str = Depends(get_current_user)):
     me = await users_collection.find_one({"username": current_user})
-    blocked = me.get("blocked_users", [])
-    not_interested = me.get("not_interested", [])
+    blocked = me.get("blocked_users", []) if me else []
+    not_interested = me.get("not_interested", []) if me else []
 
     posts = []
     cursor = posts_collection.find().sort("_id", -1)
@@ -180,7 +196,7 @@ async def get_feed(current_user: str = Depends(get_current_user)):
             if current_user not in author.get("followers", []):
                 continue
 
-        post["_id"] = post_id_str
+        post = format_post_doc(post)
         post["user_pic"] = author.get("profile_pic", "") if author else ""
         post["author_last_seen"] = author.get("last_seen", "") if author else ""
         posts.append(post)
@@ -251,12 +267,11 @@ async def mark_not_interested(post_id: str, current_user: str = Depends(get_curr
 @app.get("/users/search")
 async def search_all(q: str = "", current_user: str = Depends(get_current_user)):
     me = await users_collection.find_one({"username": current_user})
-    blocked = me.get("blocked_users", [])
+    blocked = me.get("blocked_users", []) if me else []
     clean_q = q.strip()
 
     users = []
     if clean_q:
-        # Show public accounts matching regex OR private accounts ONLY if exact username matches (or already connected)
         privacy_filter = {
             "$and": [
                 {"username": {"$nin": blocked}},
@@ -272,7 +287,6 @@ async def search_all(q: str = "", current_user: str = Depends(get_current_user))
             ]
         }
     else:
-        # When q is empty (Inbox & Suggested users), show ONLY public accounts or already connected private accounts
         privacy_filter = {
             "$and": [
                 {"username": {"$nin": blocked}},
@@ -306,8 +320,7 @@ async def search_all(q: str = "", current_user: str = Depends(get_current_user))
             if author and author.get("is_private") and p["username"] != current_user:
                 if current_user not in author.get("followers", []) and current_user not in author.get("following", []):
                     continue
-            p["_id"] = str(p["_id"])
-            matching_posts.append(p)
+            matching_posts.append(format_post_doc(p))
 
     return {"users": users, "posts": matching_posts}
 
@@ -323,35 +336,32 @@ async def get_profile(username: str, current_user: str = Depends(get_current_use
     if current_user in target.get("blocked_users", []):
         raise HTTPException(status_code=403, detail="You are blocked by this user.")
 
+    exact_username = target["username"]
     target["_id"] = str(target["_id"])
     can_view = (
         (not target.get("is_private"))
-        or (username == current_user)
+        or (exact_username == current_user)
         or (current_user in target.get("followers", []))
         or (current_user in target.get("following", []))
     )
 
-    # Hide followers/following lists if viewer is not approved
     if not can_view:
         target["followers"] = []
         target["following"] = []
 
     user_posts, saved_posts, tagged_posts = [], [], []
     if can_view:
-        async for p in posts_collection.find({"username": username}).sort("_id", -1):
-            p["_id"] = str(p["_id"])
-            user_posts.append(p)
-        async for p in posts_collection.find({"mentions": username}).sort("_id", -1):
-            p["_id"] = str(p["_id"])
-            tagged_posts.append(p)
+        async for p in posts_collection.find({"username": exact_username}).sort("_id", -1):
+            user_posts.append(format_post_doc(p))
+        async for p in posts_collection.find({"mentions": exact_username}).sort("_id", -1):
+            tagged_posts.append(format_post_doc(p))
 
-    if username == current_user:
+    if exact_username == current_user:
         for pid in target.get("saved_posts", []):
             if ObjectId.is_valid(pid):
                 sp = await posts_collection.find_one({"_id": ObjectId(pid)})
                 if sp:
-                    sp["_id"] = str(sp["_id"])
-                    saved_posts.append(sp)
+                    saved_posts.append(format_post_doc(sp))
 
     return {
         "user": target,
@@ -447,7 +457,7 @@ async def get_reels(current_user: str = Depends(get_current_user)):
     reels = []
     cursor = posts_collection.find({"$or": [{"is_reel": True}, {"media.type": "video"}]}).sort("_id", -1)
     async for r in cursor:
-        r["_id"] = str(r["_id"])
+        r = format_post_doc(r)
         author = await users_collection.find_one({"username": r["username"]})
         r["user_pic"] = author.get("profile_pic", "") if author else ""
         reels.append(r)
@@ -494,6 +504,7 @@ async def create_story(
         "poll": poll_data,
         "close_friends_only": close_friends_only,
         "viewers": [],
+        "likes": [],
         "created_at": datetime.utcnow(),
         "expires_at": datetime.utcnow() + timedelta(hours=24)
     }
@@ -517,6 +528,28 @@ async def mark_story_viewed(story_id: str, current_user: str = Depends(get_curre
     if story and story["username"] != current_user:
         await stories_collection.update_one({"_id": ObjectId(story_id)}, {"$addToSet": {"viewers": current_user}})
     return {"viewed": True}
+
+@app.post("/stories/{story_id}/like")
+async def toggle_like_story(story_id: str, current_user: str = Depends(get_current_user)):
+    story = await stories_collection.find_one({"_id": ObjectId(story_id)})
+    if not story:
+        raise HTTPException(status_code=404, detail="Story not found!")
+    likes = story.get("likes", [])
+    if current_user in likes:
+        await stories_collection.update_one({"_id": ObjectId(story_id)}, {"$pull": {"likes": current_user}})
+        likes.remove(current_user)
+    else:
+        await stories_collection.update_one({"_id": ObjectId(story_id)}, {"$addToSet": {"likes": current_user}})
+        likes.append(current_user)
+    return {"likes": likes}
+
+@app.delete("/stories/{story_id}")
+async def delete_story(story_id: str, current_user: str = Depends(get_current_user)):
+    story = await stories_collection.find_one({"_id": ObjectId(story_id)})
+    if not story or story["username"] != current_user:
+        raise HTTPException(status_code=403, detail="Not authorized!")
+    await stories_collection.delete_one({"_id": ObjectId(story_id)})
+    return {"message": "Story deleted!"}
 
 @app.post("/stories/{story_id}/vote")
 async def vote_story_poll(story_id: str, vote: PollVote, current_user: str = Depends(get_current_user)):
@@ -545,6 +578,7 @@ async def reply_to_story(story_id: str, reply: StoryReply, current_user: str = D
         "text": f"Replied to your story: {reply.text}",
         "media_url": story["media_url"],
         "reply_to_text": "",
+        "shared_post": None,
         "reactions": [],
         "seen": False,
         "created_at": datetime.utcnow().isoformat() + "Z"
@@ -578,6 +612,7 @@ async def send_dm(msg: MessageSend, current_user: str = Depends(get_current_user
         "text": msg.text,
         "media_url": msg.media_url,
         "reply_to_text": msg.reply_to_text,
+        "shared_post": msg.shared_post,
         "reactions": [],
         "seen": False,
         "created_at": datetime.utcnow().isoformat() + "Z"
@@ -693,6 +728,7 @@ async def get_notifications(current_user: str = Depends(get_current_user)):
         notifs.append(n)
     await notifications_collection.update_many({"recipient": current_user, "is_read": False}, {"$set": {"is_read": True}})
     return notifs
+
 @app.delete("/users/me")
 async def delete_my_account(payload: dict = Body(...), current_user: str = Depends(get_current_user)):
     password = payload.get("password", "")
@@ -700,14 +736,12 @@ async def delete_my_account(payload: dict = Body(...), current_user: str = Depen
     if not user or not verify_password(password, user["password"]):
         raise HTTPException(status_code=400, detail="Incorrect password! Cannot delete account.")
 
-    # Delete user's posts, stories, messages, notifications, and calls
     await posts_collection.delete_many({"username": current_user})
     await stories_collection.delete_many({"username": current_user})
     await messages_collection.delete_many({"$or": [{"sender": current_user}, {"receiver": current_user}]})
     await notifications_collection.delete_many({"$or": [{"recipient": current_user}, {"actor": current_user}]})
     await calls_collection.delete_many({"$or": [{"caller": current_user}, {"callee": current_user}]})
 
-    # Remove username from other users' followers, following, requests, and blocks
     await users_collection.update_many(
         {},
         {
@@ -720,6 +754,61 @@ async def delete_my_account(payload: dict = Body(...), current_user: str = Depen
         }
     )
 
-    # Finally delete the user account
     await users_collection.delete_one({"username": current_user})
     return {"message": "Your account and all associated data have been permanently deleted."}
+
+# --- INSTAGRAM NOTES (24-HOUR INBOX STATUS) & TYPING INDICATOR ---
+
+@app.post("/users/note")
+async def set_user_note(payload: dict = Body(...), current_user: str = Depends(get_current_user)):
+    text = payload.get("text", "").strip()[:60]
+    if not text:
+        await users_collection.update_one({"username": current_user}, {"$unset": {"note": ""}})
+        return {"message": "Note cleared"}
+    note_obj = {
+        "text": text,
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "expires_at": (datetime.utcnow() + timedelta(hours=24)).isoformat() + "Z"
+    }
+    await users_collection.update_one({"username": current_user}, {"$set": {"note": note_obj}})
+    return {"note": note_obj}
+
+@app.post("/messages/typing")
+async def update_typing_status(payload: dict = Body(...), current_user: str = Depends(get_current_user)):
+    to_user = payload.get("to_user", "")
+    is_typing = bool(payload.get("is_typing", False))
+    await users_collection.update_one(
+        {"username": current_user},
+        {
+            "$set": {
+                "typing_to": to_user if is_typing else "",
+                "typing_at": datetime.utcnow().isoformat() + "Z"
+            }
+        }
+    )
+    return {"ok": True}
+
+# --- STORY ARCHIVE & CLOSE FRIENDS MANAGER ---
+
+@app.get("/stories/archive")
+async def get_story_archive(current_user: str = Depends(get_current_user)):
+    archived = []
+    async for s in stories_collection.find({"username": current_user}).sort("_id", -1):
+        s["_id"] = str(s["_id"])
+        if isinstance(s.get("created_at"), datetime):
+            s["created_at"] = s["created_at"].isoformat() + "Z"
+        if isinstance(s.get("expires_at"), datetime):
+            s["expires_at"] = s["expires_at"].isoformat() + "Z"
+        archived.append(s)
+    return archived
+
+@app.post("/users/close-friends/{target_username}")
+async def toggle_close_friend(target_username: str, current_user: str = Depends(get_current_user)):
+    me = await users_collection.find_one({"username": current_user})
+    cf_list = me.get("close_friends", [])
+    if target_username in cf_list:
+        await users_collection.update_one({"username": current_user}, {"$pull": {"close_friends": target_username}})
+        return {"in_close_friends": False}
+    else:
+        await users_collection.update_one({"username": current_user}, {"$addToSet": {"close_friends": target_username}})
+        return {"in_close_friends": True}
