@@ -254,8 +254,29 @@ async def search_all(q: str = "", current_user: str = Depends(get_current_user))
     blocked = me.get("blocked_users", [])
 
     users = []
-    u_query = {"username": {"$regex": q, "$options": "i", "$nin": blocked}} if q else {"username": {"$nin": blocked}}
-    async for u in users_collection.find(u_query, {"password": 0}).limit(30):
+    # Strict Private Account rule:
+    # Show user ONLY IF:
+    # 1. It's current_user, OR
+    # 2. Account is NOT private, OR
+    # 3. Private account owner (u) follows current_user, OR
+    # 4. current_user is already in private account's approved followers
+    privacy_filter = {
+        "$and": [
+            {"username": {"$nin": blocked}},
+            {
+                "$or": [
+                    {"username": current_user},
+                    {"is_private": {"$ne": True}},
+                    {"following": current_user},
+                    {"followers": current_user},
+                ]
+            }
+        ]
+    }
+    if q:
+        privacy_filter["$and"].append({"username": {"$regex": q, "$options": "i"}})
+
+    async for u in users_collection.find(privacy_filter, {"password": 0}).limit(30):
         u["_id"] = str(u["_id"])
         last_msg = await messages_collection.find_one(
             {"$or": [{"sender": current_user, "receiver": u["username"]}, {"sender": u["username"], "receiver": current_user}]},
@@ -270,6 +291,10 @@ async def search_all(q: str = "", current_user: str = Depends(get_current_user))
         clean_q = q.lstrip("#").lower()
         p_query = {"$or": [{"hashtags": clean_q}, {"caption": {"$regex": q, "$options": "i"}}]}
         async for p in posts_collection.find(p_query).limit(20):
+            author = await users_collection.find_one({"username": p["username"]})
+            if author and author.get("is_private") and p["username"] != current_user:
+                if current_user not in author.get("followers", []) and current_user not in author.get("following", []):
+                    continue
             p["_id"] = str(p["_id"])
             matching_posts.append(p)
 
@@ -284,7 +309,17 @@ async def get_profile(username: str, current_user: str = Depends(get_current_use
         raise HTTPException(status_code=403, detail="You are blocked by this user.")
 
     target["_id"] = str(target["_id"])
-    can_view = (not target.get("is_private")) or (username == current_user) or (current_user in target.get("followers", []))
+    can_view = (
+        (not target.get("is_private"))
+        or (username == current_user)
+        or (current_user in target.get("followers", []))
+        or (current_user in target.get("following", []))
+    )
+
+    # Hide followers/following lists if viewer is not approved
+    if not can_view:
+        target["followers"] = []
+        target["following"] = []
 
     user_posts, saved_posts, tagged_posts = [], [], []
     if can_view:
@@ -515,6 +550,13 @@ async def add_story_highlight(data: HighlightCreate, current_user: str = Depends
 
 @app.post("/messages", status_code=status.HTTP_201_CREATED)
 async def send_dm(msg: MessageSend, current_user: str = Depends(get_current_user)):
+    recipient_user = await users_collection.find_one({"username": msg.receiver})
+    if not recipient_user:
+        raise HTTPException(status_code=404, detail="User not found!")
+    if recipient_user.get("is_private"):
+        if current_user not in recipient_user.get("following", []) and current_user not in recipient_user.get("followers", []):
+            raise HTTPException(status_code=403, detail="This account is private. You cannot message them until they follow you or accept your request.")
+
     new_msg = {
         "sender": current_user,
         "receiver": msg.receiver,
@@ -575,6 +617,11 @@ async def delete_message(msg_id: str, current_user: str = Depends(get_current_us
 @app.post("/calls/initiate")
 async def initiate_call(payload: dict = Body(...), current_user: str = Depends(get_current_user)):
     callee = payload.get("callee")
+    callee_user = await users_collection.find_one({"username": callee})
+    if callee_user and callee_user.get("is_private"):
+        if current_user not in callee_user.get("following", []) and current_user not in callee_user.get("followers", []):
+            raise HTTPException(status_code=403, detail="Cannot call a private account unless connected.")
+
     call_type = payload.get("call_type", "video")
     offer = payload.get("offer")
     await calls_collection.delete_many({"$or": [{"caller": current_user}, {"callee": callee}]})

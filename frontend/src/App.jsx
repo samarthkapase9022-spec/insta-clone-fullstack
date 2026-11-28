@@ -870,19 +870,23 @@ function App() {
   const handleSendDM = async (e) => {
     e.preventDefault();
     if (!newMessage.trim() || !selectedChatUser) return;
-    await fetch(`${API_URL}/messages`, {
+      const res = await fetch(${API_URL}/messages, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders },
       body: JSON.stringify({
-        receiver: selectedChatUser.username,
-        text: newMessage,
-        reply_to_text: replyToMsg,
+      receiver: selectedChatUser.username,
+      text: newMessage,
+      reply_to_text: replyToMsg,
       }),
     });
-    setNewMessage("");
-    setReplyToMsg("");
-    fetchMessages(selectedChatUser.username);
-    fetchAllUsers();
+    if (!res.ok) {
+      const err = await res.json();
+      return alert(err.detail || "Cannot send message to this private account.");
+      }
+      setNewMessage("");
+      setReplyToMsg("");
+      fetchMessages(selectedChatUser.username);
+      fetchAllUsers();
   };
 
   const handleSendChatImage = async (e) => {
@@ -1658,8 +1662,12 @@ function App() {
                       <button className={profileData.user.followers?.includes(currentUser) ? "ig-btn-gray" : "ig-btn-blue"} onClick={() => handleFollow(viewedUsername)}>
                         {profileData.user.followers?.includes(currentUser) ? "Following" : profileData.user.follow_requests?.includes(currentUser) ? "Requested" : "Follow"}
                       </button>
-                      <button className="ig-btn-gray" onClick={() => { setActiveTab("messages"); setSelectedChatUser(profileData.user); }}>Message</button>
-                      <button className="ig-btn-gray" onClick={() => startCall(profileData.user, "video")}>📹 Call</button>
+                      {profileData.can_view && (
+                        <>
+                          <button className="ig-btn-gray" onClick={() => { setActiveTab("messages"); setSelectedChatUser(profileData.user); }}>Message</button>
+                          <button className="ig-btn-gray" onClick={() => startCall(profileData.user, "video")}>📹 Call</button>
+                        </>
+                      )}
                       <button className="ig-btn-gray" style={{ color: "#ff3040" }} onClick={() => handleBlockUser(viewedUsername)}>Block</button>
                     </>
                   )}
