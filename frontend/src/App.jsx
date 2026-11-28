@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import "./App.css";
 import { API_URL, formatTimeAgo } from "./utils/helpers";
 import { Icons } from "./components/Icons";
 import AuthPage from "./components/AuthPage";
