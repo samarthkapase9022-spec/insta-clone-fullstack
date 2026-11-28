@@ -575,6 +575,8 @@ function App() {
   };
 
   const openProfile = async (targetUsername) => {
+    if (!targetUsername) return;
+    targetUsername = targetUsername.trim().toLowerCase();
     setViewedUsername(targetUsername);
     setActiveTab("profile");
     setProfileSubTab("posts");

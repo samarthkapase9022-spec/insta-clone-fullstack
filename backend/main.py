@@ -302,9 +302,10 @@ async def search_all(q: str = "", current_user: str = Depends(get_current_user))
 
 @app.get("/users/{username}")
 async def get_profile(username: str, current_user: str = Depends(get_current_user)):
-    target = await users_collection.find_one({"username": username}, {"password": 0})
+    clean_username = username.strip().lower()
+    target = await users_collection.find_one({"username": clean_username}, {"password": 0})
     if not target:
-        raise HTTPException(status_code=404, detail="User not found!")
+        raise HTTPException(status_code=404, detail=f"User '{clean_username}' not found!")
     if current_user in target.get("blocked_users", []):
         raise HTTPException(status_code=403, detail="You are blocked by this user.")
 
