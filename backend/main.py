@@ -252,29 +252,40 @@ async def mark_not_interested(post_id: str, current_user: str = Depends(get_curr
 async def search_all(q: str = "", current_user: str = Depends(get_current_user)):
     me = await users_collection.find_one({"username": current_user})
     blocked = me.get("blocked_users", [])
+    clean_q = q.strip()
 
     users = []
-    # Strict Private Account rule:
-    # Show user ONLY IF:
-    # 1. It's current_user, OR
-    # 2. Account is NOT private, OR
-    # 3. Private account owner (u) follows current_user, OR
-    # 4. current_user is already in private account's approved followers
-    privacy_filter = {
-        "$and": [
-            {"username": {"$nin": blocked}},
-            {
-                "$or": [
-                    {"username": current_user},
-                    {"is_private": {"$ne": True}},
-                    {"following": current_user},
-                    {"followers": current_user},
-                ]
-            }
-        ]
-    }
-    if q:
-        privacy_filter["$and"].append({"username": {"$regex": q, "$options": "i"}})
+    if clean_q:
+        # Show public accounts matching regex OR private accounts ONLY if exact username matches (or already connected)
+        privacy_filter = {
+            "$and": [
+                {"username": {"$nin": blocked}},
+                {
+                    "$or": [
+                        {"username": current_user},
+                        {"is_private": {"$ne": True}, "username": {"$regex": re.escape(clean_q), "$options": "i"}},
+                        {"following": current_user, "username": {"$regex": re.escape(clean_q), "$options": "i"}},
+                        {"followers": current_user, "username": {"$regex": re.escape(clean_q), "$options": "i"}},
+                        {"username": {"$regex": f"^{re.escape(clean_q)}$", "$options": "i"}},
+                    ]
+                }
+            ]
+        }
+    else:
+        # When q is empty (Inbox & Suggested users), show ONLY public accounts or already connected private accounts
+        privacy_filter = {
+            "$and": [
+                {"username": {"$nin": blocked}},
+                {
+                    "$or": [
+                        {"username": current_user},
+                        {"is_private": {"$ne": True}},
+                        {"following": current_user},
+                        {"followers": current_user},
+                    ]
+                }
+            ]
+        }
 
     async for u in users_collection.find(privacy_filter, {"password": 0}).limit(30):
         u["_id"] = str(u["_id"])
@@ -287,9 +298,9 @@ async def search_all(q: str = "", current_user: str = Depends(get_current_user))
         users.append(u)
 
     matching_posts = []
-    if q:
-        clean_q = q.lstrip("#").lower()
-        p_query = {"$or": [{"hashtags": clean_q}, {"caption": {"$regex": q, "$options": "i"}}]}
+    if clean_q:
+        tag_q = clean_q.lstrip("#").lower()
+        p_query = {"$or": [{"hashtags": tag_q}, {"caption": {"$regex": re.escape(clean_q), "$options": "i"}}]}
         async for p in posts_collection.find(p_query).limit(20):
             author = await users_collection.find_one({"username": p["username"]})
             if author and author.get("is_private") and p["username"] != current_user:

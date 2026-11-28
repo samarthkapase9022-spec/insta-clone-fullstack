@@ -1460,29 +1460,37 @@ function App() {
             <div className="ig-inbox-list">
               <div style={{ padding: "18px", fontWeight: "700", borderBottom: "1px solid var(--border-line)" }}>{currentUser}</div>
               <div style={{ overflowY: "auto", flex: 1 }}>
-                {allUsers.filter((u) => u.username !== currentUser).map((u) => {
-                  const isFollowing = u.followers?.includes(currentUser) || meObj?.following?.includes(u.username);
-                  const statusInfo = getOnlineStatus(u.last_seen);
-                  return (
-                    <div key={u._id} className={`ig-thread-row ${activeChatLiveUser?.username === u.username ? "active" : ""}`} onClick={() => { setSelectedChatUser(u); fetchMessages(u.username); }}>
-                      <div className="avatar-status-wrap">
-                        <div className="ig-avatar-44">{u.username[0]}</div>
-                        {isFollowing && statusInfo.isOnline && <span className="online-green-dot" />}
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                          <span style={{ fontWeight: "600", fontSize: "14px" }}>{u.username}</span>
-                          {u.last_msg_time && (
-                            <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>{formatTimeAgo(u.last_msg_time)}</span>
-                          )}
+                {allUsers
+                  .filter(
+                    (u) =>
+                      u.username !== currentUser &&
+                      (u.followers?.includes(currentUser) ||
+                        u.following?.includes(currentUser) ||
+                        Boolean(u.last_msg_text))
+                  )
+                  .map((u) => {
+                    const isFollowing = u.followers?.includes(currentUser) || meObj?.following?.includes(u.username);
+                    const statusInfo = getOnlineStatus(u.last_seen);
+                    return (
+                      <div key={u._id} className={`ig-thread-row ${activeChatLiveUser?.username === u.username ? "active" : ""}`} onClick={() => { setSelectedChatUser(u); fetchMessages(u.username); }}>
+                        <div className="avatar-status-wrap">
+                          <div className="ig-avatar-44">{u.username[0]}</div>
+                          {isFollowing && statusInfo.isOnline && <span className="online-green-dot" />}
                         </div>
-                        <div style={{ fontSize: "12px", color: statusInfo.isOnline && isFollowing ? "#1ed760" : "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {u.last_msg_text ? u.last_msg_text : isFollowing ? statusInfo.label : "Tap to chat"}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <span style={{ fontWeight: "600", fontSize: "14px" }}>{u.username}</span>
+                            {u.last_msg_time && (
+                              <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>{formatTimeAgo(u.last_msg_time)}</span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: "12px", color: statusInfo.isOnline && isFollowing ? "#1ed760" : "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {u.last_msg_text ? u.last_msg_text : isFollowing ? statusInfo.label : "Tap to chat"}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
               </div>
             </div>
 
