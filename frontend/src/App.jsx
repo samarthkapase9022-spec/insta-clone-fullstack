@@ -175,6 +175,7 @@ function App() {
   const [activeCall, setActiveCall] = useState(null);
   const pcRef = useRef(null);
   const localStreamRef = useRef(null);
+  const remoteStreamRef = useRef(null);
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const [isMuted, setIsMuted] = useState(false);
@@ -198,6 +199,7 @@ function App() {
     }
   }, [token]);
 
+  // Attach local & remote media streams safely once call modal renders
   useEffect(() => {
     if (activeCall) {
       if (remoteVideoRef.current && remoteStreamRef.current) {
@@ -211,7 +213,7 @@ function App() {
     }
   }, [activeCall, activeCall?.status]);
 
-  // Heartbeat Ping every 15s + Incoming Call Check every 4s
+  // Heartbeat Ping every 15s + Safe Call Polling every 4s
   useEffect(() => {
     if (!token) return;
     const pingTimer = setInterval(() => {
@@ -220,31 +222,37 @@ function App() {
     }, 15000);
 
     const callPollTimer = setInterval(async () => {
-      if (!activeCall && !incomingCall) {
-        const res = await fetch(`${API_URL}/calls/incoming`, { headers: authHeaders });
-        if (res.ok) {
-          const data = await res.json();
-          if (data && data._id) setIncomingCall(data);
-        }
-      }
-      if (activeCall && activeCall.status === "ringing") {
-        const res = await fetch(`${API_URL}/calls/${activeCall.call_id}`, { headers: authHeaders });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.status === "connected" && data.answer && pcRef.current) {
-            await pcRef.current.setRemoteDescription(new RTCSessionDescription(data.answer));
-            setActiveCall((prev) => ({ ...prev, status: "connected" }));
-          } else if (data.status === "ended") {
-            cleanupWebRTC();
+      try {
+        if (!activeCall && !incomingCall) {
+          const res = await fetch(`${API_URL}/calls/incoming`, { headers: authHeaders });
+          if (res.ok) {
+            const data = await res.json();
+            if (data && data._id) setIncomingCall(data);
           }
         }
-      }
-      if (activeCall && activeCall.status === "connected") {
-        const res = await fetch(`${API_URL}/calls/${activeCall.call_id}`, { headers: authHeaders });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.status === "ended") cleanupWebRTC();
+        if (activeCall && activeCall.status === "ringing") {
+          const res = await fetch(`${API_URL}/calls/${activeCall.call_id}`, { headers: authHeaders });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.status === "connected" && data.answer && pcRef.current) {
+              if (pcRef.current.signalingState === "have-local-offer") {
+                await pcRef.current.setRemoteDescription(new RTCSessionDescription(data.answer));
+              }
+              setActiveCall((prev) => (prev ? { ...prev, status: "connected" } : null));
+            } else if (data.status === "ended") {
+              cleanupWebRTC();
+            }
+          }
         }
+        if (activeCall && activeCall.status === "connected") {
+          const res = await fetch(`${API_URL}/calls/${activeCall.call_id}`, { headers: authHeaders });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.status === "ended") cleanupWebRTC();
+          }
+        }
+      } catch (err) {
+        console.error("Call poll error:", err);
       }
     }, 4000);
 
@@ -289,10 +297,12 @@ function App() {
   }, [token, activeTab, selectedChatUser]);
 
   const pingServer = async () => {
-    await fetch(`${API_URL}/users/ping`, { method: "POST", headers: authHeaders });
+    try {
+      await fetch(`${API_URL}/users/ping`, { method: "POST", headers: authHeaders });
+    } catch (e) {}
   };
 
-// --- WEBRTC CALLING FUNCTIONS (TWO-WAY AUDIO/VIDEO + MUTE/SPEAKER) ---
+  // --- CRASH-PROOF TWO-WAY WEBRTC CALLING ---
   const createPeerConnection = () => {
     const pc = new RTCPeerConnection({
       iceServers: [
@@ -311,9 +321,10 @@ function App() {
       ],
     });
     pc.ontrack = (event) => {
-      remoteStreamRef.current = event.streams[0];
+      const stream = (event.streams && event.streams[0]) || new MediaStream([event.track]);
+      remoteStreamRef.current = stream;
       if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = event.streams[0];
+        remoteVideoRef.current.srcObject = stream;
         remoteVideoRef.current.play().catch(() => {});
       }
     };
@@ -330,14 +341,19 @@ function App() {
         }
       };
       pc.addEventListener("icegatheringstatechange", checkState);
-      setTimeout(resolve, 3000);
+      setTimeout(resolve, 2500);
     });
 
   const startCall = async (targetUser, callType) => {
     try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert("Camera/Mic not supported in this browser. Please open in Chrome or Safari.");
+        return;
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true },
-        video: callType === "video",
+        audio: true,
+        video: callType === "video" ? { facingMode: "user" } : false,
       });
       localStreamRef.current = stream;
       setIsMuted(false);
@@ -348,12 +364,14 @@ function App() {
       pcRef.current = pc;
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
-      const offer = await pc.createOffer({
-        offerToReceiveAudio: true,
-        offerToReceiveVideo: callType === "video",
-      });
+      const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       await waitForIceGathering(pc);
+
+      const safeOffer = {
+        type: pc.localDescription?.type || offer.type,
+        sdp: pc.localDescription?.sdp || offer.sdp,
+      };
 
       const res = await fetch(`${API_URL}/calls/initiate`, {
         method: "POST",
@@ -361,24 +379,47 @@ function App() {
         body: JSON.stringify({
           callee: targetUser.username,
           call_type: callType,
-          offer: pc.localDescription,
+          offer: safeOffer,
         }),
       });
+
       if (res.ok) {
         const { call_id } = await res.json();
         setActiveCall({ call_id, peerUser: targetUser.username, call_type: callType, status: "ringing" });
+
+        // Record call history inside DM chat
+        await fetch(`${API_URL}/messages`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...authHeaders },
+          body: JSON.stringify({
+            receiver: targetUser.username,
+            text: callType === "video" ? "📹 Started a video call" : "📞 Started an audio call",
+          }),
+        });
+        if (selectedChatUser?.username === targetUser.username) {
+          fetchMessages(targetUser.username);
+        }
+      } else {
+        cleanupWebRTC();
+        alert("Could not connect call.");
       }
     } catch (err) {
-      alert("Microphone/Camera permission denied or unavailable: " + err.message);
+      cleanupWebRTC();
+      alert("Call failed: " + (err?.message || "Check camera/mic permissions"));
     }
   };
 
   const acceptIncomingCall = async () => {
     if (!incomingCall) return;
     try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert("Browser does not support camera/microphone access.");
+        return;
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true },
-        video: incomingCall.call_type === "video",
+        audio: true,
+        video: incomingCall.call_type === "video" ? { facingMode: "user" } : false,
       });
       localStreamRef.current = stream;
       setIsMuted(false);
@@ -394,10 +435,15 @@ function App() {
       await pc.setLocalDescription(answer);
       await waitForIceGathering(pc);
 
+      const safeAnswer = {
+        type: pc.localDescription?.type || answer.type,
+        sdp: pc.localDescription?.sdp || answer.sdp,
+      };
+
       await fetch(`${API_URL}/calls/${incomingCall._id}/answer`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders },
-        body: JSON.stringify({ answer: pc.localDescription }),
+        body: JSON.stringify({ answer: safeAnswer }),
       });
 
       setActiveCall({
@@ -408,14 +454,14 @@ function App() {
       });
       setIncomingCall(null);
     } catch (err) {
-      alert("Could not start call: " + err.message);
+      cleanupWebRTC();
+      alert("Could not accept call: " + (err?.message || "Permission denied"));
     }
   };
 
   const toggleMute = () => {
     if (!localStreamRef.current) return;
-    const audioTracks = localStreamRef.current.getAudioTracks();
-    audioTracks.forEach((track) => {
+    localStreamRef.current.getAudioTracks().forEach((track) => {
       track.enabled = isMuted;
     });
     setIsMuted(!isMuted);
@@ -425,7 +471,6 @@ function App() {
     const nextState = !isSpeakerOn;
     setIsSpeakerOn(nextState);
     if (remoteVideoRef.current) {
-      // Lower volume for earpiece mode vs full volume for speaker mode
       remoteVideoRef.current.volume = nextState ? 1.0 : 0.25;
       if (typeof remoteVideoRef.current.setSinkId === "function") {
         try {
@@ -441,8 +486,7 @@ function App() {
 
   const toggleCamera = () => {
     if (!localStreamRef.current) return;
-    const videoTracks = localStreamRef.current.getVideoTracks();
-    videoTracks.forEach((track) => {
+    localStreamRef.current.getVideoTracks().forEach((track) => {
       track.enabled = isCamOff;
     });
     setIsCamOff(!isCamOff);
@@ -450,7 +494,7 @@ function App() {
 
   const endOrDeclineCall = async (callId) => {
     if (callId) {
-      await fetch(`${API_URL}/calls/${callId}/end`, { method: "POST", headers: authHeaders });
+      await fetch(`${API_URL}/calls/${callId}/end`, { method: "POST", headers: authHeaders }).catch(() => {});
     }
     setIncomingCall(null);
     cleanupWebRTC();
@@ -949,7 +993,22 @@ function App() {
           </button>
         </form>
         {!isSignup && (
-          <p style={{ marginTop: "14px", fontSize: "12px", color: "var(--text-muted)", cursor: "pointer" }} onClick={() => alert("Password reset link sent to your registered email!")}>
+          <p
+            style={{ marginTop: "14px", fontSize: "12px", color: "#0095f6", cursor: "pointer", fontWeight: "600" }}
+            onClick={async () => {
+              const email = prompt("Tumcha registered Email taka:");
+              const username = prompt("Tumcha Username taka:");
+              const new_password = prompt("Navin Password taka:");
+              if (!email || !username || !new_password) return;
+              const res = await fetch(`${API_URL}/auth/reset-password`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ email, username, new_password }),
+              });
+              const data = await res.json();
+              alert(data.message || data.detail);
+            }}
+          >
             Forgot password?
           </p>
         )}
@@ -1389,7 +1448,7 @@ function App() {
           </div>
         )}
 
-        {/* 5. MESSAGES / DM + ACTIVE STATUS + CALL BUTTONS */}
+        {/* 5. MESSAGES / DM + STICKY HEADER + CALL LOGS */}
         {activeTab === "messages" && (
           <div className={`ig-inbox ${activeChatLiveUser ? "chat-open" : ""}`}>
             <div className="ig-inbox-list">
@@ -1424,8 +1483,7 @@ function App() {
             <div className="ig-chat-pane">
               {activeChatLiveUser ? (
                 <>
-                  {/* Chat Header with Active Status & Audio/Video Call Icons */}
-                  <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border-line)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div className="ig-chat-header">
                     <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                       <button className="mobile-back-btn" onClick={() => setSelectedChatUser(null)}>←</button>
                       <div className="avatar-status-wrap">
@@ -1452,7 +1510,6 @@ function App() {
                     </div>
                   </div>
 
-                  {/* Chat Messages with Timestamps */}
                   <div className="ig-chat-scroll">
                     {messages.map((m) => {
                       const isMe = m.sender === currentUser;
@@ -1479,7 +1536,7 @@ function App() {
                   </div>
 
                   {replyToMsg && (
-                    <div style={{ padding: "6px 18px", background: "var(--bg-hover)", fontSize: "12px", display: "flex", justifyContent: "space-between" }}>
+                    <div style={{ padding: "6px 18px", background: "var(--bg-hover)", fontSize: "12px", display: "flex", justifyContent: "space-between", flexShrink: 0 }}>
                       <span>Replying to: <strong>{replyToMsg}</strong></span>
                       <span style={{ cursor: "pointer" }} onClick={() => setReplyToMsg("")}>✕</span>
                     </div>
@@ -1796,7 +1853,7 @@ function App() {
               </span>
             </div>
 
-            <div className="call-bottom-controls" style={{ gap: "12px", padding: "0 12px" }}>
+            <div className="call-bottom-controls" style={{ gap: "10px", padding: "0 12px" }}>
               <button
                 className="call-ctrl-btn"
                 style={{ background: isMuted ? "#fff" : "rgba(255,255,255,0.2)", color: isMuted ? "#000" : "#fff" }}
