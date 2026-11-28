@@ -215,6 +215,15 @@ body {
   display: flex;
   justify-content: center;
 }
+.call-ctrl-btn {
+  border: none;
+  padding: 11px 14px;
+  border-radius: 24px;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+}
 
 /* --- STORY PROGRESS BARS --- */
 .story-progress-row {

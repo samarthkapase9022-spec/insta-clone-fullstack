@@ -177,6 +177,9 @@ function App() {
   const localStreamRef = useRef(null);
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isSpeakerOn, setIsSpeakerOn] = useState(true);
+  const [isCamOff, setIsCamOff] = useState(false);
 
   const [notifications, setNotifications] = useState([]);
   const [passForm, setPassForm] = useState({ old_password: "", new_password: "" });
@@ -194,6 +197,19 @@ function App() {
       pingServer();
     }
   }, [token]);
+
+  useEffect(() => {
+    if (activeCall) {
+      if (remoteVideoRef.current && remoteStreamRef.current) {
+        remoteVideoRef.current.srcObject = remoteStreamRef.current;
+        remoteVideoRef.current.play().catch(() => {});
+      }
+      if (localVideoRef.current && localStreamRef.current) {
+        localVideoRef.current.srcObject = localStreamRef.current;
+        localVideoRef.current.play().catch(() => {});
+      }
+    }
+  }, [activeCall, activeCall?.status]);
 
   // Heartbeat Ping every 15s + Incoming Call Check every 4s
   useEffect(() => {
@@ -276,14 +292,29 @@ function App() {
     await fetch(`${API_URL}/users/ping`, { method: "POST", headers: authHeaders });
   };
 
-  // --- WEBRTC CALLING FUNCTIONS ---
+// --- WEBRTC CALLING FUNCTIONS (TWO-WAY AUDIO/VIDEO + MUTE/SPEAKER) ---
   const createPeerConnection = () => {
     const pc = new RTCPeerConnection({
-      iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }],
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+        {
+          urls: "turn:openrelay.metered.ca:80",
+          username: "openrelayproject",
+          credential: "openrelayproject",
+        },
+        {
+          urls: "turn:openrelay.metered.ca:443",
+          username: "openrelayproject",
+          credential: "openrelayproject",
+        },
+      ],
     });
     pc.ontrack = (event) => {
+      remoteStreamRef.current = event.streams[0];
       if (remoteVideoRef.current) {
         remoteVideoRef.current.srcObject = event.streams[0];
+        remoteVideoRef.current.play().catch(() => {});
       }
     };
     return pc;
@@ -299,21 +330,28 @@ function App() {
         }
       };
       pc.addEventListener("icegatheringstatechange", checkState);
-      setTimeout(resolve, 2500);
+      setTimeout(resolve, 3000);
     });
 
   const startCall = async (targetUser, callType) => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
+        audio: { echoCancellation: true, noiseSuppression: true },
         video: callType === "video",
       });
       localStreamRef.current = stream;
+      setIsMuted(false);
+      setIsSpeakerOn(true);
+      setIsCamOff(false);
+
       const pc = createPeerConnection();
       pcRef.current = pc;
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
-      const offer = await pc.createOffer();
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: callType === "video",
+      });
       await pc.setLocalDescription(offer);
       await waitForIceGathering(pc);
 
@@ -329,9 +367,6 @@ function App() {
       if (res.ok) {
         const { call_id } = await res.json();
         setActiveCall({ call_id, peerUser: targetUser.username, call_type: callType, status: "ringing" });
-        setTimeout(() => {
-          if (localVideoRef.current) localVideoRef.current.srcObject = stream;
-        }, 100);
       }
     } catch (err) {
       alert("Microphone/Camera permission denied or unavailable: " + err.message);
@@ -342,10 +377,14 @@ function App() {
     if (!incomingCall) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
+        audio: { echoCancellation: true, noiseSuppression: true },
         video: incomingCall.call_type === "video",
       });
       localStreamRef.current = stream;
+      setIsMuted(false);
+      setIsSpeakerOn(true);
+      setIsCamOff(false);
+
       const pc = createPeerConnection();
       pcRef.current = pc;
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
@@ -368,12 +407,45 @@ function App() {
         status: "connected",
       });
       setIncomingCall(null);
-      setTimeout(() => {
-        if (localVideoRef.current) localVideoRef.current.srcObject = stream;
-      }, 100);
     } catch (err) {
       alert("Could not start call: " + err.message);
     }
+  };
+
+  const toggleMute = () => {
+    if (!localStreamRef.current) return;
+    const audioTracks = localStreamRef.current.getAudioTracks();
+    audioTracks.forEach((track) => {
+      track.enabled = isMuted;
+    });
+    setIsMuted(!isMuted);
+  };
+
+  const toggleSpeaker = async () => {
+    const nextState = !isSpeakerOn;
+    setIsSpeakerOn(nextState);
+    if (remoteVideoRef.current) {
+      // Lower volume for earpiece mode vs full volume for speaker mode
+      remoteVideoRef.current.volume = nextState ? 1.0 : 0.25;
+      if (typeof remoteVideoRef.current.setSinkId === "function") {
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const audioOuts = devices.filter((d) => d.kind === "audiooutput");
+          if (audioOuts.length > 1) {
+            await remoteVideoRef.current.setSinkId(nextState ? audioOuts[audioOuts.length - 1].deviceId : audioOuts[0].deviceId);
+          }
+        } catch (e) {}
+      }
+    }
+  };
+
+  const toggleCamera = () => {
+    if (!localStreamRef.current) return;
+    const videoTracks = localStreamRef.current.getVideoTracks();
+    videoTracks.forEach((track) => {
+      track.enabled = isCamOff;
+    });
+    setIsCamOff(!isCamOff);
   };
 
   const endOrDeclineCall = async (callId) => {
@@ -389,6 +461,7 @@ function App() {
       localStreamRef.current.getTracks().forEach((t) => t.stop());
       localStreamRef.current = null;
     }
+    remoteStreamRef.current = null;
     if (pcRef.current) {
       pcRef.current.close();
       pcRef.current = null;
@@ -1642,7 +1715,7 @@ function App() {
                 </div>
               ))}
             </div>
-            
+
             <div style={{ border: "1px solid #ff3040", borderRadius: "8px", padding: "16px", marginTop: "20px" }}>
               <h4 style={{ marginBottom: "6px", color: "#ff3040" }}>Delete Account</h4>
               <p style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "10px" }}>
@@ -1693,19 +1766,65 @@ function App() {
       {activeCall && (
         <div className="ig-backdrop">
           <div className="ig-active-call-box">
-            <video ref={remoteVideoRef} autoPlay playsInline className="remote-video-stream" />
+            <video
+              ref={remoteVideoRef}
+              autoPlay
+              playsInline
+              className="remote-video-stream"
+              style={{ display: activeCall.call_type === "video" ? "block" : "none" }}
+            />
+            {activeCall.call_type === "audio" && (
+              <div style={{ margin: "auto", textAlign: "center", color: "#fff" }}>
+                <div className="ig-avatar-44" style={{ width: "90px", height: "90px", fontSize: "36px", margin: "0 auto 14px" }}>
+                  {activeCall.peerUser[0]}
+                </div>
+                <h3>@{activeCall.peerUser}</h3>
+                <p style={{ color: "#1ed760", fontSize: "13px", marginTop: "6px" }}>
+                  {activeCall.status === "ringing" ? "Ringing..." : "● Audio Call Connected"}
+                </p>
+              </div>
+            )}
+
             {activeCall.call_type === "video" && (
               <video ref={localVideoRef} autoPlay muted playsInline className="local-video-pip" />
             )}
+
             <div className="call-top-overlay">
               <strong>@{activeCall.peerUser}</strong>
               <span style={{ fontSize: "13px", color: "#1ed760" }}>
                 {activeCall.status === "ringing" ? "Ringing..." : "● Connected"}
               </span>
             </div>
-            <div className="call-bottom-controls">
+
+            <div className="call-bottom-controls" style={{ gap: "12px", padding: "0 12px" }}>
+              <button
+                className="call-ctrl-btn"
+                style={{ background: isMuted ? "#fff" : "rgba(255,255,255,0.2)", color: isMuted ? "#000" : "#fff" }}
+                onClick={toggleMute}
+              >
+                {isMuted ? "🔇 Unmute" : "🎙️ Mute"}
+              </button>
+
+              <button
+                className="call-ctrl-btn"
+                style={{ background: isSpeakerOn ? "#fff" : "rgba(255,255,255,0.2)", color: isSpeakerOn ? "#000" : "#fff" }}
+                onClick={toggleSpeaker}
+              >
+                {isSpeakerOn ? "🔊 Speaker" : "🔈 Phone"}
+              </button>
+
+              {activeCall.call_type === "video" && (
+                <button
+                  className="call-ctrl-btn"
+                  style={{ background: isCamOff ? "#fff" : "rgba(255,255,255,0.2)", color: isCamOff ? "#000" : "#fff" }}
+                  onClick={toggleCamera}
+                >
+                  {isCamOff ? "📷 Cam On" : "🚫 Cam Off"}
+                </button>
+              )}
+
               <button className="call-btn-decline" onClick={() => endOrDeclineCall(activeCall.call_id)}>
-                End Call
+                End
               </button>
             </div>
           </div>
