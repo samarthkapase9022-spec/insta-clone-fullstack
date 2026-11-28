@@ -870,7 +870,7 @@ function App() {
   const handleSendDM = async (e) => {
     e.preventDefault();
     if (!newMessage.trim() || !selectedChatUser) return;
-      const res = await fetch(${API_URL}/messages, {
+      const res = await fetch(`${API_URL}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders },
       body: JSON.stringify({
